@@ -21,6 +21,7 @@ from developer_panel import (
     admin_text, admins_menu, developer_markup, permission_markup, permissions_select_markup,
     handle_callback as handle_developer_panel_callback,
     handle_input as handle_developer_panel_input,
+    chat_commands_markup,
 )
 from downloader import cleanup_job, download_audio
 from member_panel import handle_start, handle_user_panel_callback
@@ -472,7 +473,9 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             "اتصال": "join", "دخول": "join",
             "خروج": "leave", "فك": "leave",
             "اوامر": "help", "الوامر": "help", "الاوامر": "help",
-            "اوامرالبوت": "help", "help": "help", "commands": "help",
+            "اوامرالبوت": "help", "قائمةالاوامر": "help", "قائمهالاوامر": "help",
+            "اوامرشات": "help", "اوامرالشات": "help", "امر": "help",
+            "help": "help", "commands": "help",
         }
         action = aliases.get(command)
         if not action:
@@ -482,7 +485,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                 action = "pause"
             elif normalized in {"مسح القائمة", "مسح الاغاني"}:
                 action = "clear"
-            elif normalized in {"اوامر البوت", "الوامر"}:
+            elif normalized in {"اوامر البوت", "اوامر الشات", "قائمة الاوامر", "قائمه الاوامر", "الوامر"}:
                 action = "help"
             else:
                 return False
@@ -737,4 +740,3 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
         alert(bot,call,"ℹ️ الطلب غير معروف.")
 
     calls.set_stream_end_handler(lambda chat_id: _stream_end(bot, calls, player, chat_id))
-
