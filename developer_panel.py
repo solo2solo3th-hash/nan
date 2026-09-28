@@ -1,7 +1,7 @@
 """Developer control panel with granular per-button/per-action permissions."""
 from __future__ import annotations
 from telebot import types
-from config import DEVELOPER_ID
+from config import DEVELOPER_ID, SUPPORTED_AUDIO_SOURCES
 from database import (
     PERMISSION_GROUPS, PERMISSIONS, add_sudo, add_subscription, counts,
     delete_subscription, get_pending, get_permission_state, list_sudos,
@@ -119,14 +119,34 @@ def begin(bot, call, mode, prompt, back="dev_main"):
     bot.edit_message_text(prompt,call.message.chat.id,call.message.message_id,reply_markup=_back(back),parse_mode="HTML")
 
 
+SOURCE_LABELS = {
+    "youtube": "▶️ YouTube",
+    "soundcloud": "🟠 SoundCloud",
+    "audius": "🔵 Audius",
+    "jamendo": "🟣 Jamendo",
+    "bandcamp": "🟤 Bandcamp",
+    "audiomack": "🟡 Audiomack",
+    "mixcloud": "🟪 Mixcloud",
+    "internet_archive": "🗄️ Internet Archive",
+    "vimeo": "🔷 Vimeo",
+    "dailymotion": "🔴 Dailymotion",
+}
+
 def playback_markup():
     m=types.InlineKeyboardMarkup(row_width=1)
     m.add(types.InlineKeyboardButton("✍️ الكتابة: الاسم : الرابط",callback_data="set_play_credit"))
     m.add(types.InlineKeyboardButton("🎵 زر الموسيقى: الاسم : الرابط",callback_data="set_play_music"))
     m.add(types.InlineKeyboardButton("🖼️ صورة لوحة التشغيل",callback_data="set_play_image"))
-    m.add(types.InlineKeyboardButton("1️⃣ المصدر الأول: الاسم : الرابط",callback_data="set_source1"))
-    m.add(types.InlineKeyboardButton("2️⃣ المصدر الثاني: الاسم : الرابط",callback_data="set_source2"))
+    m.add(types.InlineKeyboardButton("🌐 المصادر العشرة",callback_data="show_sources10"))
     m.add(types.InlineKeyboardButton("↩️ رجوع",callback_data="dev_main")); return m
+
+def sources10_markup():
+    m=types.InlineKeyboardMarkup(row_width=1)
+    for source in SUPPORTED_AUDIO_SOURCES:
+        label=SOURCE_LABELS.get(source, source)
+        m.add(types.InlineKeyboardButton(f"{label}  •  مربوط", callback_data=f"source_info:{source}"))
+    m.add(types.InlineKeyboardButton("↩️ رجوع", callback_data="dev_playback"))
+    return m
 
 
 def start_panel_markup():
@@ -266,7 +286,14 @@ def handle_callback(bot,call):
     if d=="sub_list":
         rows=subscriptions(); text="📋 <b>القنوات</b>\n\n"+("\n".join(f"• {x[1]} — {x[2]}" for x in rows) if rows else "لا توجد قنوات."); bot.edit_message_text(text,call.message.chat.id,call.message.message_id,reply_markup=subs_markup(),parse_mode="HTML"); return True
     if d=="dev_playback":
-        bot.edit_message_text("🎵 <b>لوحة التشغيل</b>\n\nكل اسم ورابط يدخلان معًا بالصيغة: <code>اسم الزر : رابط الزر</code>",call.message.chat.id,call.message.message_id,reply_markup=playback_markup(),parse_mode="HTML"); return True
+        bot.edit_message_text("🎵 <b>لوحة التشغيل</b>\n\nالاسم والرابط للأزرار المخصصة يدخلان معًا بالصيغة: <code>اسم الزر : رابط الزر</code>",call.message.chat.id,call.message.message_id,reply_markup=playback_markup(),parse_mode="HTML"); return True
+    if d=="show_sources10":
+        bot.edit_message_text("🌐 <b>مصادر التشغيل العشرة</b>\n\nهذه هي مصادر المحرك الفعلية، وليست أزرار روابط مخصصة.\nالمصادر الحالية مرتبطة داخل نظام التحميل والـfallback.",call.message.chat.id,call.message.message_id,reply_markup=sources10_markup(),parse_mode="HTML"); return True
+    if d.startswith("source_info:"):
+        source=d.split(":",1)[1]
+        label=SOURCE_LABELS.get(source, source)
+        bot.answer_callback_query(call.id, f"{label} — المصدر مرتبط بالمحرك.", show_alert=True)
+        return True
     if d=="dev_start_panel": bot.edit_message_text("👤 <b>لوحة /start</b>\n\nالأسماء والروابط تُدخل معًا.",call.message.chat.id,call.message.message_id,reply_markup=start_panel_markup(),parse_mode="HTML"); return True
     prompts={
         "set_play_credit":"✍️ أرسل: اسم الكتابة : رابط الكتابة",
