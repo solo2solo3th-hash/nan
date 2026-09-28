@@ -81,6 +81,10 @@ def main_markup():
     )
     m.add(
         types.InlineKeyboardButton("🔐 الحقوق", callback_data="dev_rights"),
+        types.InlineKeyboardButton("🎛️ لوحة التشغيل", callback_data="dev_playback_settings"),
+    )
+    m.add(
+        types.InlineKeyboardButton("👤 لوحة الخاص", callback_data="adm_user_panel"),
         types.InlineKeyboardButton("❌ إغلاق", callback_data="close_menu"),
     )
     return m
@@ -558,7 +562,7 @@ def playback_settings_markup():
     m.add(types.InlineKeyboardButton("✍️ الكتابة: الاسم + الرابط", callback_data="play_credit_pair"))
     m.add(types.InlineKeyboardButton("🎵 زر الموسيقى: الاسم + الرابط", callback_data="play_music_pair"))
     m.add(types.InlineKeyboardButton("🖼️ صورة لوحة التشغيل", callback_data="play_set_image"))
-    m.add(types.InlineKeyboardButton("↩️ رجوع", callback_data="adm_home"))
+    m.add(types.InlineKeyboardButton("↩️ رجوع", callback_data="back_to_main"))
     return m
 
 
