@@ -461,6 +461,42 @@ def show_private_rights(bot, call):
     )
 
 
+
+def playback_settings_markup():
+    m = types.InlineKeyboardMarkup(row_width=1)
+    m.add(types.InlineKeyboardButton("✍️ الكتابة: الاسم + الرابط", callback_data="play_credit_pair"))
+    m.add(types.InlineKeyboardButton("🎵 زر الموسيقى: الاسم + الرابط", callback_data="play_music_pair"))
+    m.add(types.InlineKeyboardButton("🖼️ صورة لوحة التشغيل", callback_data="play_set_image"))
+    m.add(types.InlineKeyboardButton("↩️ رجوع", callback_data="adm_home"))
+    return m
+
+
+def show_playback_settings(bot, call):
+    from database import setting_get
+    credit_name = setting_get("PLAY_CREDIT_NAME") or "غير محدد"
+    credit_url = setting_get("PLAY_CREDIT_URL") or "غير محدد"
+    music_name = setting_get("PLAY_MUSIC_BUTTON_NAME") or "غير محدد"
+    music_url = setting_get("PLAY_MUSIC_BUTTON_URL") or "غير محدد"
+    image_type = setting_get("PLAY_IMAGE_TYPE") or "photo"
+    bot.edit_message_text(
+        "🎛️ <b>لوحة التشغيل</b>\n\n"
+        f"✍️ الكتابة: <code>{credit_name}</code>\n"
+        f"🔗 الرابط: <code>{credit_url}</code>\n"
+        f"🎵 زر الموسيقى: <code>{music_name}</code>\n"
+        f"🔗 الرابط: <code>{music_url}</code>\n"
+        f"🖼️ الصورة: <code>{image_type}</code>",
+        call.message.chat.id, call.message.message_id,
+        reply_markup=playback_settings_markup(), parse_mode="HTML"
+    )
+
+
+def begin_playback_input(bot, call, mode, prompt):
+    pending_input_set(call.from_user.id, mode)
+    bot.edit_message_text(
+        prompt, call.message.chat.id, call.message.message_id,
+        reply_markup=cancel_markup("dev_playback_settings"), parse_mode="HTML"
+    )
+
 def open_panel(bot, message):
     if not is_developer(message.from_user.id):
         return False
@@ -524,6 +560,22 @@ def handle_callback(bot, call):
         except Exception as exc:
             bot.answer_callback_query(call.id, f"❌ {exc}", show_alert=True)
         return True
+    if data == "dev_playback_settings":
+        bot.answer_callback_query(call.id)
+        show_playback_settings(bot, call)
+        return True
+    if data == "play_credit_pair":
+        bot.answer_callback_query(call.id)
+        begin_playback_input(bot, call, "play_credit_pair", "✍️ أرسل بالصيغة: <code>اسم الزر : الرابط</code>")
+        return True
+    if data == "play_music_pair":
+        bot.answer_callback_query(call.id)
+        begin_playback_input(bot, call, "play_music_pair", "🎵 أرسل بالصيغة: <code>اسم الزر : الرابط</code>")
+        return True
+    if data == "play_set_image":
+        bot.answer_callback_query(call.id)
+        begin_playback_input(bot, call, "play_set_image", "🖼️ أرسل صورة أو GIF لوحة التشغيل:")
+        return True
     if data == "dev_private_rights":
         bot.answer_callback_query(call.id); show_private_rights(bot, call); return True
     if data == "back_to_main":
@@ -545,13 +597,33 @@ def handle_input(bot, message):
     if not is_developer(message.from_user.id):
         return False
 
-    state = get_pending(message.from_user.id)
+    state = pending_input_get(message.from_user.id)
     if state == "waiting_add_admin":
         return add_admin_from_message(bot, message)
     if state == "waiting_remove_admin":
         return remove_admin_from_message(bot, message)
     if state == "waiting_fs_channel":
         return add_forced_channel_from_message(bot, message)
+
+    if state in {"play_credit_pair", "play_music_pair"}:
+        text = (message.text or "").strip()
+        parts = [part.strip() for part in text.split(":", 1)]
+        if len(parts) != 2 or not parts[0] or not parts[1]:
+            bot.reply_to(message, "❌ الصيغة الصحيحة: اسم الزر : الرابط")
+            return True
+        name, url = parts
+        if not url.startswith(("https://", "http://", "tg://")):
+            bot.reply_to(message, "❌ الرابط يجب أن يبدأ بـ https:// أو http:// أو tg://")
+            return True
+        if state == "play_credit_pair":
+            setting_set("PLAY_CREDIT_NAME", name)
+            setting_set("PLAY_CREDIT_URL", url)
+        else:
+            setting_set("PLAY_MUSIC_BUTTON_NAME", name)
+            setting_set("PLAY_MUSIC_BUTTON_URL", url)
+        pending_input_set(message.from_user.id, None)
+        bot.reply_to(message, "✅ تم حفظ الزر والرابط.")
+        return True
 
     # Playback panel image/GIF input is handled here before the generic
     # router so a media message cannot be swallowed by another handler.
@@ -591,5 +663,5 @@ __all__ = [
     "DEV_IDS", "PERMISSION_LABELS", "main_markup", "developer_panel_markup",
     "open_panel", "dev_main_panel", "handle_callback",
     "dev_callbacks_handler", "handle_input", "handle_admin_inputs",
-    "register_developer_panel", "statistics_text", "admins_text",
+    "register_developer_panel", "statistics_text", "admins_text", "playback_settings_markup", "show_playback_settings",
 ]
