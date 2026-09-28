@@ -83,6 +83,7 @@ def main_markup():
         types.InlineKeyboardButton("🔐 الحقوق", callback_data="dev_rights"),
         types.InlineKeyboardButton("🎛️ لوحة التشغيل", callback_data="dev_playback_settings"),
     )
+    m.add(types.InlineKeyboardButton("💬 أوامر الشات", callback_data="dev_chat_commands"))
     m.add(
         types.InlineKeyboardButton("👤 لوحة الخاص", callback_data="adm_user_panel"),
         types.InlineKeyboardButton("❌ إغلاق", callback_data="close_menu"),
@@ -566,6 +567,26 @@ def playback_settings_markup():
     return m
 
 
+def chat_commands_markup():
+    m = types.InlineKeyboardMarkup(row_width=1)
+    m.add(types.InlineKeyboardButton("✍️ اسم الزر + الرابط", callback_data="chat_cmd_button"))
+    m.add(types.InlineKeyboardButton("🗑️ حذف الزر", callback_data="chat_cmd_button_clear"))
+    m.add(types.InlineKeyboardButton("↩️ رجوع", callback_data="back_to_main"))
+    return m
+
+def show_chat_commands(bot, call):
+    from database import setting_get
+    name = setting_get("CHAT_COMMANDS_BUTTON_NAME") or "غير محدد"
+    url = setting_get("CHAT_COMMANDS_BUTTON_URL") or "غير محدد"
+    bot.edit_message_text(
+        "💬 <b>أوامر الشات</b>\n\n"
+        "عند كتابة «اوامر» داخل المجموعة تظهر قائمة الأوامر للعضو أو المشرف أو المالك.\n\n"
+        f"🔘 اسم الزر: <code>{name}</code>\n"
+        f"🔗 الرابط: <code>{url}</code>",
+        call.message.chat.id, call.message.message_id,
+        reply_markup=chat_commands_markup(), parse_mode="HTML"
+    )
+
 def show_playback_settings(bot, call):
     from database import setting_get
     credit_name = setting_get("PLAY_CREDIT_NAME") or "غير محدد"
@@ -654,6 +675,21 @@ def handle_callback(bot, call):
             show_forced_sub(bot, call)
         except Exception as exc:
             bot.answer_callback_query(call.id, f"❌ {exc}", show_alert=True)
+        return True
+    if data == "dev_chat_commands":
+        bot.answer_callback_query(call.id)
+        show_chat_commands(bot, call)
+        return True
+    if data == "chat_cmd_button":
+        bot.answer_callback_query(call.id)
+        begin_playback_input(bot, call, "chat_cmd_button", "💬 أرسل بالصيغة: <code>اسم الزر : الرابط</code>")
+        return True
+    if data == "chat_cmd_button_clear":
+        from database import setting_set
+        setting_set("CHAT_COMMANDS_BUTTON_NAME", "")
+        setting_set("CHAT_COMMANDS_BUTTON_URL", "")
+        bot.answer_callback_query(call.id, "✅ تم حذف زر أوامر الشات.")
+        show_chat_commands(bot, call)
         return True
     if data == "dev_playback_settings":
         bot.answer_callback_query(call.id)
@@ -753,7 +789,7 @@ def handle_input(bot, message):
     if state == "waiting_fs_channel":
         return add_forced_channel_from_message(bot, message)
 
-    if state in {"play_credit_pair", "play_music_pair"}:
+    if state in {"play_credit_pair", "play_music_pair", "chat_cmd_button"}:
         text = (message.text or "").strip()
         parts = [part.strip() for part in text.split(":", 1)]
         if len(parts) != 2 or not parts[0] or not parts[1]:
@@ -766,9 +802,12 @@ def handle_input(bot, message):
         if state == "play_credit_pair":
             setting_set("PLAY_CREDIT_NAME", name)
             setting_set("PLAY_CREDIT_URL", url)
-        else:
+        elif state == "play_music_pair":
             setting_set("PLAY_MUSIC_BUTTON_NAME", name)
             setting_set("PLAY_MUSIC_BUTTON_URL", url)
+        else:
+            setting_set("CHAT_COMMANDS_BUTTON_NAME", name)
+            setting_set("CHAT_COMMANDS_BUTTON_URL", url)
         pending_input_set(message.from_user.id, None)
         bot.reply_to(message, "✅ تم حفظ الزر والرابط.")
         return True
