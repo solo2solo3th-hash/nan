@@ -1,0 +1,5 @@
+pyTelegramBotAPI==4.37.0
+pyrogrammod==2.4.1
+TgCrypto==1.2.5
+py-tgcalls==2.3.3
+yt-dlp[default,curl-cffi]==2026.8.19
