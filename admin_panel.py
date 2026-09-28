@@ -36,24 +36,11 @@ def admin_text() -> str:
     return _admin_text()
 
 
-def users_markup():
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    keyboard.row(
-        types.InlineKeyboardButton("🚫 حظر", callback_data="user_ban"),
-        types.InlineKeyboardButton("✅ فك الحظر", callback_data="user_unban"),
-    )
-    keyboard.add(types.InlineKeyboardButton("📋 المحظورون", callback_data="user_banned"))
-    keyboard.add(types.InlineKeyboardButton("↩️ الرئيسية", callback_data="adm_home"))
-    return keyboard
-
-
 def playback_markup():
     keyboard = types.InlineKeyboardMarkup(row_width=1)
+    keyboard.add(types.InlineKeyboardButton("✍️ الكتابة: الاسم + الرابط", callback_data="play_credit_pair"))
+    keyboard.add(types.InlineKeyboardButton("🎵 زر الموسيقى: الاسم + الرابط", callback_data="play_music_pair"))
     keyboard.add(types.InlineKeyboardButton("🖼️ صورة لوحة التشغيل", callback_data="play_set_image"))
-    keyboard.add(types.InlineKeyboardButton("📝 اسم المصدر الأول", callback_data="play_source1"))
-    keyboard.add(types.InlineKeyboardButton("🔗 رابط المصدر الأول", callback_data="play_source1_url"))
-    keyboard.add(types.InlineKeyboardButton("📝 اسم المصدر الثاني", callback_data="play_source2"))
-    keyboard.add(types.InlineKeyboardButton("🔗 رابط المصدر الثاني", callback_data="play_source2_url"))
     keyboard.add(types.InlineKeyboardButton("↩️ الرئيسية", callback_data="adm_home"))
     return keyboard
 
