@@ -560,7 +560,7 @@ def show_private_rights(bot, call):
 
 def playback_settings_markup():
     m = types.InlineKeyboardMarkup(row_width=1)
-    m.add(types.InlineKeyboardButton("✍️ الكتابة: الاسم + الرابط", callback_data="play_credit_pair"))
+    m.add(types.InlineKeyboardButton("✍️ النص داخل الأغنية: الاسم + الرابط", callback_data="play_credit_pair"))
     m.add(types.InlineKeyboardButton("🎵 زر الموسيقى: الاسم + الرابط", callback_data="play_music_pair"))
     m.add(types.InlineKeyboardButton("🖼️ صورة لوحة التشغيل", callback_data="play_set_image"))
     m.add(types.InlineKeyboardButton("↩️ رجوع", callback_data="back_to_main"))
@@ -596,7 +596,7 @@ def show_playback_settings(bot, call):
     image_type = setting_get("PLAY_IMAGE_TYPE") or "photo"
     bot.edit_message_text(
         "🎛️ <b>لوحة التشغيل</b>\n\n"
-        f"✍️ الكتابة: <code>{credit_name}</code>\n"
+        f"✍️ النص داخل الأغنية: <code>{credit_name}</code>\n"
         f"🔗 الرابط: <code>{credit_url}</code>\n"
         f"🎵 زر الموسيقى: <code>{music_name}</code>\n"
         f"🔗 الرابط: <code>{music_url}</code>\n"
@@ -697,7 +697,7 @@ def handle_callback(bot, call):
         return True
     if data == "play_credit_pair":
         bot.answer_callback_query(call.id)
-        begin_playback_input(bot, call, "play_credit_pair", "✍️ أرسل بالصيغة: <code>اسم الزر : الرابط</code>")
+        begin_playback_input(bot, call, "play_credit_pair", "✍️ أرسل النص الذي يظهر داخل بطاقة الأغنية بالصيغة: <code>الاسم : الرابط</code>")
         return True
     if data == "play_music_pair":
         bot.answer_callback_query(call.id)
