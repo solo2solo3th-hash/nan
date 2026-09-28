@@ -2,6 +2,7 @@
 from __future__ import annotations
 import logging
 import uuid
+from html import escape
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -63,27 +64,57 @@ def user_can_play(message, permission: str = "playback") -> bool:
 
 
 def playback_controls():
+    """Build the playback keyboard, including the configurable link and + button."""
     keyboard = types.InlineKeyboardMarkup(row_width=3)
-    keyboard.row(types.InlineKeyboardButton("⏸️", callback_data="music_pause"), types.InlineKeyboardButton("▶️", callback_data="music_resume"), types.InlineKeyboardButton("⏭️", callback_data="music_skip"))
-    keyboard.row(types.InlineKeyboardButton("⏹️", callback_data="music_stop"), types.InlineKeyboardButton("📋 القائمة", callback_data="music_queue"))
+    keyboard.row(
+        types.InlineKeyboardButton("⏸️", callback_data="music_pause"),
+        types.InlineKeyboardButton("▶️", callback_data="music_resume"),
+        types.InlineKeyboardButton("⏭️", callback_data="music_skip"),
+    )
+    keyboard.row(
+        types.InlineKeyboardButton("⏹️", callback_data="music_stop"),
+        types.InlineKeyboardButton("📋 القائمة", callback_data="music_queue"),
+        types.InlineKeyboardButton("➕", callback_data="music_add"),
+    )
+
+    button_name = (setting_get("PLAY_MUSIC_BUTTON_NAME") or "").strip()
+    button_url = (setting_get("PLAY_MUSIC_BUTTON_URL") or "").strip()
+    if button_name and button_url:
+        keyboard.row(types.InlineKeyboardButton(button_name[:64], url=button_url))
     return keyboard
+
+
+def _playback_text(track: Track | None) -> str:
+    if track is None:
+        return "⏹️ انتهت قائمة التشغيل."
+
+    title = escape(str(track.title))
+    text = f"🎵 الآن: {title}\n⏱️ {duration_text(track.duration)}"
+    credit_name = (setting_get("PLAY_CREDIT_NAME") or "").strip()
+    credit_url = (setting_get("PLAY_CREDIT_URL") or "").strip()
+    if credit_name and credit_url:
+        safe_name = escape(credit_name)
+        safe_url = escape(credit_url, quote=True)
+        text += f'\n\n✍️ <a href="{safe_url}">{safe_name}</a>'
+    return text
 
 
 def _send_now(bot, chat_id: int, track: Track | None) -> None:
     image_id = setting_get("PLAY_IMAGE_FILE_ID")
     image_type = setting_get("PLAY_IMAGE_TYPE") or "photo"
-    text = "⏹️ انتهت قائمة التشغيل." if track is None else f"🎵 الآن: {track.title}\n⏱️ {duration_text(track.duration)}"
+    text = _playback_text(track)
     markup = None if track is None else playback_controls()
     if image_id and track is not None:
         try:
+            kwargs = {"caption": text, "reply_markup": markup, "parse_mode": "HTML"}
             if image_type == "animation":
-                bot.send_animation(chat_id, image_id, caption=text, reply_markup=markup)
+                bot.send_animation(chat_id, image_id, **kwargs)
             else:
-                bot.send_photo(chat_id, image_id, caption=text, reply_markup=markup)
+                bot.send_photo(chat_id, image_id, **kwargs)
             return
         except Exception:
             log.exception("Failed to send playback image")
-    bot.send_message(chat_id, text, reply_markup=markup)
+    bot.send_message(chat_id, text, reply_markup=markup, parse_mode="HTML")
 
 
 def _send_queue(bot, player: MusicPlayer, chat_id: int) -> None:
@@ -499,12 +530,9 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
         actor = getattr(getattr(message, "from_user", None), "id", None)
         is_channel = message.chat.type == "channel"
 
-        # Voice-chat controls are only meaningful in groups/supergroups.
-        # Channel posts can still use the help/download commands.
-        if is_channel and action in {"play", "skip", "stop", "pause", "resume", "clear", "join", "leave", "queue"}:
-            bot.reply_to(message, "ℹ️ أوامر التشغيل الصوتي تُستخدم داخل المجموعة، وليس القناة.")
-            return True
-
+        # Treat groups, supergroups, and channel posts as one music-command surface.
+        # Channel posts do not carry from_user, so permission checks fall back to the
+        # same chat-level command path instead of rejecting the channel outright.
         allowed = True if is_channel else user_can_play(message, action)
         if action in {"play", "download", "skip", "stop", "pause", "resume", "clear", "join", "leave"} and not allowed:
             bot.reply_to(message, "🚫 ليست لديك صلاحية التحكم بالموسيقى.")
@@ -734,6 +762,22 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                 elif data=="music_pause": calls.pause(chat_id); bot.send_message(chat_id,"⏸️ تم الإيقاف المؤقت.")
                 elif data=="music_resume": calls.resume(chat_id); bot.send_message(chat_id,"▶️ تم الاستئناف.")
                 elif data=="music_queue": _send_queue(bot,player,chat_id)
+                elif data=="music_add":
+                    user = call.from_user
+                    first_name = escape(getattr(user, "first_name", None) or "عضو")
+                    username = getattr(user, "username", None)
+                    if username:
+                        mention = f"@{escape(username)}"
+                    else:
+                        mention = f'<a href="tg://user?id={int(user.id)}">{first_name}</a>'
+                    current = player.current(chat_id)
+                    song_name = escape(current.title) if current else "الأغنية الحالية"
+                    bot.send_message(
+                        chat_id,
+                        f"➕ {mention} أضاف/طلب {song_name}",
+                        parse_mode="HTML",
+                        reply_to_message_id=call.message.message_id,
+                    )
                 alert(bot,call,"تم.")
             except Exception: log.exception("playback callback failed"); alert(bot,call,"❌ تعذر التنفيذ.",True)
             return
