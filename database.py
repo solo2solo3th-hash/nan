@@ -13,7 +13,6 @@ PERMISSION_GROUPS = {
         "play": "🎵 تشغيل",
         "pause": "⏸️ إيقاف مؤقت",
         "resume": "▶️ استئناف",
-        "seek": "⏪⏩ تقديم/ترجيع 10 ثواني",
         "skip": "⏭️ تخطي",
         "stop": "⏹️ إيقاف",
         "queue": "📋 القائمة",
@@ -73,12 +72,6 @@ PERMISSION_GROUPS = {
         "soundcloud": "🟠 مصدر SoundCloud",
         "audius": "🔵 مصدر Audius",
         "jamendo": "🟣 مصدر Jamendo",
-        "bandcamp": "🟤 مصدر Bandcamp",
-        "audiomack": "🟡 مصدر Audiomack",
-        "mixcloud": "🟪 مصدر Mixcloud",
-        "internet_archive": "🗄️ مصدر Internet Archive",
-        "vimeo": "🔷 مصدر Vimeo",
-        "dailymotion": "🔴 مصدر Dailymotion",
     },
     "channels": {
         "view": "📢 عرض القنوات",
@@ -172,9 +165,9 @@ def init_db() -> None:
             "ADD_NAME": "", "ADD_URL": "",
             "PLAY_CREDIT_NAME": "", "PLAY_CREDIT_URL": "",
             "PLAY_MUSIC_BUTTON_NAME": "", "PLAY_MUSIC_BUTTON_URL": "",
-            "PLAY_BUTTON1_NAME": "", "PLAY_BUTTON1_URL": "",
-            "PLAY_BUTTON2_NAME": "", "PLAY_BUTTON2_URL": "",
             "PLAY_IMAGE_FILE_ID": "", "PLAY_IMAGE_TYPE": "photo",
+            "CHAT_COMMANDS_BUTTON_NAME": "",
+            "CHAT_COMMANDS_BUTTON_URL": "",
             "SUBS_ENABLED": "ON",
             "START_TEXT": "هذا البوت خاص بتشغيل الأغاني والفيديوهات",
             "START_IMAGE_FILE_ID": "", "START_IMAGE_TYPE": "photo",
@@ -185,8 +178,6 @@ def init_db() -> None:
         # Remove legacy/example values from earlier panel versions without touching
         # values the owner has already customized.
         legacy_values = {
-            # Values from pre-refactor builds. They are cleared only when the
-            # owner has not replaced them, so existing custom settings survive.
             "SOURCE1_NAME": "SG SOURCE",
             "SOURCE2_NAME": "Source Qatar",
             "ADD_NAME": "ADD",
