@@ -1,13 +1,15 @@
 """All Bot API handlers; keeps main.py as a tiny bootstrap file."""
 from __future__ import annotations
 import logging
+import uuid
+from pathlib import Path
 from urllib.parse import urlparse
 
 from telebot import types
 
 from admin_panel import playback_markup, subscriptions_markup, users_markup
 from calls import VoiceCallRunner
-from config import CONTROL_ADMINS_ONLY, DEVELOPER_ID, MAX_QUEUE_SIZE
+from config import CONTROL_ADMINS_ONLY, DEVELOPER_ID, MAX_QUEUE_SIZE, MAX_DOWNLOAD_MB, DOWNLOAD_DIR
 from database import (
     PERMISSIONS, add_subscription, add_sudo, ban_user, banned_ids, clear_pending,
     counts, delete_subscription, get_pending, get_permission_state, has_permission,
@@ -20,7 +22,7 @@ from developer_panel import (
     handle_callback as handle_developer_panel_callback,
     handle_input as handle_developer_panel_input,
 )
-from downloader import download_audio
+from downloader import cleanup_job, download_audio
 from member_panel import handle_start, handle_user_panel_callback
 from music_player import MusicPlayer, Track
 from subscriptions import mandatory_missing
@@ -44,11 +46,18 @@ def require_group(bot, message) -> bool:
     return True
 
 
-def user_can_play(message) -> bool:
-    if is_banned(message.from_user.id):
+def user_can_play(message, permission: str = "playback") -> bool:
+    """Check the actor's playback permission without crashing on channel posts."""
+    user = getattr(message, "from_user", None)
+    user_id = getattr(user, "id", None)
+    if user_id is None:
+        # Channel posts have no from_user. They are handled separately below.
+        return False
+    if is_banned(user_id):
         return False
     if CONTROL_ADMINS_ONLY:
-        return admin_can(message.from_user.id, "playback")
+        permission = "playback" if permission not in PERMISSIONS else permission
+        return admin_can(user_id, permission)
     return True
 
 
@@ -325,68 +334,313 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
     def queue_handler(message):
         if require_group(bot, message): _send_queue(bot, player, message.chat.id)
 
-    @bot.message_handler(content_types=["text", "photo", "animation", "audio", "document"])
+
+
+    def _play_replied_audio(message) -> bool:
+        """Play an audio/document replied to by `شغل` or `تشغيل`."""
+        replied = getattr(message, "reply_to_message", None)
+        if replied is None:
+            bot.reply_to(message, "↩️ رد على ملف صوتي أو MP3 واكتب: شغل")
+            return True
+
+        audio = getattr(replied, "audio", None)
+        document = getattr(replied, "document", None)
+        if audio is not None:
+            file_obj = audio
+        elif document is not None and (getattr(document, "mime_type", "") or "").lower().startswith("audio/"):
+            file_obj = document
+        else:
+            bot.reply_to(message, "❌ الرسالة المردود عليها ليست ملفاً صوتياً أو MP3.")
+            return True
+
+        job_dir = None
+        try:
+            file_info = bot.get_file(file_obj.file_id)
+            file_size = int(getattr(file_info, "file_size", 0) or getattr(file_obj, "file_size", 0) or 0)
+            if file_size and file_size > MAX_DOWNLOAD_MB * 1024 * 1024:
+                bot.reply_to(message, f"❌ الملف أكبر من الحد المسموح ({MAX_DOWNLOAD_MB} MB).")
+                return True
+
+            raw = bot.download_file(file_info.file_path)
+            if not raw:
+                raise RuntimeError("EMPTY_FILE")
+
+            job_dir = Path(DOWNLOAD_DIR) / f"telegram_reply_{uuid.uuid4().hex}"
+            job_dir.mkdir(parents=True, exist_ok=False)
+            suffix = Path(getattr(file_info, "file_path", "")).suffix
+            if not suffix:
+                suffix = Path(getattr(file_obj, "file_name", "") or "").suffix
+            suffix = suffix if suffix and len(suffix) <= 10 else ".mp3"
+            local_path = job_dir / f"audio{suffix}"
+            local_path.write_bytes(raw)
+
+            if local_path.stat().st_size > MAX_DOWNLOAD_MB * 1024 * 1024:
+                cleanup_job(job_dir)
+                bot.reply_to(message, f"❌ الملف أكبر من الحد المسموح ({MAX_DOWNLOAD_MB} MB).")
+                return True
+
+            title = (getattr(file_obj, "title", None) or getattr(file_obj, "file_name", None) or "ملف صوتي").strip()
+            duration = int(getattr(file_obj, "duration", 0) or 0)
+            track = Track(
+                title=title,
+                duration=duration,
+                path=str(local_path),
+                job=str(job_dir),
+                requester_id=int(getattr(message.from_user, "id", DEVELOPER_ID)),
+                source_url="",
+            )
+            started, position, claimed = player.enqueue_or_claim(message.chat.id, track)
+            if started and claimed is not None:
+                try:
+                    calls.play(message.chat.id, claimed.path)
+                except Exception:
+                    player.rollback_claim(message.chat.id, claimed)
+                    raise
+                _send_now(bot, message.chat.id, claimed)
+            else:
+                bot.reply_to(message, f"➕ تمت إضافة الملف إلى القائمة.\n📋 الترتيب: {position}")
+            return True
+        except RuntimeError as exc:
+            cleanup_job(job_dir)
+            if str(exc) == "QUEUE_FULL":
+                bot.reply_to(message, "❌ قائمة التشغيل ممتلئة.")
+            else:
+                log.exception("reply audio playback failed")
+                bot.reply_to(message, "❌ تعذر تجهيز الملف الصوتي.")
+            return True
+        except Exception:
+            cleanup_job(job_dir)
+            log.exception("reply audio playback failed")
+            bot.reply_to(message, "❌ تعذر تحميل الملف أو تشغيله. تأكد أن الملف صوتي صالح وحاول مرة أخرى.")
+            return True
+
+    def _send_command_help(message) -> bool:
+        text = (
+            "🎵 <b>أوامر الشات</b>\n\n"
+            "▶️ <b>شغل اسم الأغنية</b> — يبحث ويشغل بالاتصال\n"
+            "▶️ <b>تشغيل اسم الأغنية</b> — نفس الشيء\n"
+            "↩️ <b>رد على MP3 واكتب شغل</b> — يشغل الملف المردود عليه\n"
+            "⏭️ <b>تخطي</b> — الأغنية التالية\n"
+            "⏹️ <b>ايقاف</b> / <b>وقف</b> — إيقاف التشغيل\n"
+            "⏸️ <b>مؤقت</b> / <b>إيقاف مؤقت</b> — إيقاف مؤقت\n"
+            "▶️ <b>استمرار</b> / <b>كمل</b> — استئناف\n"
+            "📋 <b>قائمة</b> / <b>الأغاني</b> — عرض القائمة\n"
+            "🗑️ <b>مسح</b> / <b>مسح القائمة</b> — مسح القائمة وإيقاف التشغيل\n"
+            "📥 <b>يوت اسم الأغنية</b> / <b>نزل</b> / <b>تنزيل</b> — تنزيل وإرسال MP3\n"
+            "👋 <b>خروج</b> / <b>فك</b> — الخروج من الاتصال\n"
+            "🔌 <b>اتصال</b> — الاتصال يُستخدم تلقائياً عند تشغيل أغنية\n"
+        )
+        bot.reply_to(
+            message,
+            text,
+            reply_markup=chat_commands_markup(),
+            parse_mode="HTML",
+        )
+        return True
+
+    def _normalize_chat_command(text: str) -> str:
+        """Normalize common Arabic spelling variants for chat commands."""
+        return (
+            (text or "")
+            .strip()
+            .replace("ـ", "")
+            .replace("أ", "ا")
+            .replace("إ", "ا")
+            .replace("آ", "ا")
+            .replace("ٱ", "ا")
+            .casefold()
+        )
+
+
+    def _text_music_command(message) -> bool:
+        """Handle natural-language music commands sent directly in group/channel chats."""
+        raw = (getattr(message, "text", None) or "").strip()
+        if not raw or raw.startswith("/"):
+            return False
+        parts = raw.split(maxsplit=1)
+        command = _normalize_chat_command(parts[0])
+        arg = parts[1].strip() if len(parts) > 1 else ""
+        aliases = {
+            "شغل": "play", "تشغيل": "play",
+            "يوت": "download", "نزل": "download", "تنزيل": "download",
+            "تخطي": "skip", "التالي": "skip", "التاليه": "skip",
+            "ايقاف": "stop", "إيقاف": "stop", "وقف": "stop", "توقف": "stop",
+            "مؤقت": "pause", "إيقافمؤقت": "pause", "ايقافمؤقت": "pause",
+            "استمرار": "resume", "كمل": "resume", "اكمل": "resume", "استأنف": "resume",
+            "قائمة": "queue", "الاغاني": "queue", "الأغاني": "queue",
+            "مسح": "clear", "مسحالقائمة": "clear", "مسح_القائمة": "clear",
+            "اتصال": "join", "دخول": "join",
+            "خروج": "leave", "فك": "leave",
+            "اوامر": "help", "الوامر": "help", "الاوامر": "help",
+            "اوامرالبوت": "help", "help": "help", "commands": "help",
+        }
+        action = aliases.get(command)
+        if not action:
+            # Support the common spaced spelling: "إيقاف مؤقت" / "مسح القائمة".
+            normalized = _normalize_chat_command(raw)
+            if normalized == "ايقاف مؤقت":
+                action = "pause"
+            elif normalized in {"مسح القائمة", "مسح الاغاني"}:
+                action = "clear"
+            elif normalized in {"اوامر البوت", "الوامر"}:
+                action = "help"
+            else:
+                return False
+
+        if action == "help":
+            return _send_command_help(message)
+
+        if message.chat.type not in {"group", "supergroup", "channel"}:
+            return False
+
+        actor = getattr(getattr(message, "from_user", None), "id", None)
+        is_channel = message.chat.type == "channel"
+
+        # Voice-chat controls are only meaningful in groups/supergroups.
+        # Channel posts can still use the help/download commands.
+        if is_channel and action in {"play", "skip", "stop", "pause", "resume", "clear", "join", "leave", "queue"}:
+            bot.reply_to(message, "ℹ️ أوامر التشغيل الصوتي تُستخدم داخل المجموعة، وليس القناة.")
+            return True
+
+        allowed = True if is_channel else user_can_play(message, action)
+        if action in {"play", "download", "skip", "stop", "pause", "resume", "clear", "join", "leave"} and not allowed:
+            bot.reply_to(message, "🚫 ليست لديك صلاحية التحكم بالموسيقى.")
+            return True
+
+        chat_id = message.chat.id
+        try:
+            if action == "play":
+                if not arg:
+                    return _play_replied_audio(message)
+                bot.send_chat_action(chat_id, "typing")
+                status = bot.reply_to(message, "🔎 جاري البحث والتنزيل...")
+                job = None
+                owns_job = True
+                try:
+                    info, path, job = download_audio(arg)
+                    track = Track(
+                        title=info.get("title") or "Unknown",
+                        duration=int(info.get("duration") or 0),
+                        path=path, job=job,
+                        requester_id=int(actor or DEVELOPER_ID),
+                        source_url=info.get("webpage_url") or info.get("original_url") or "",
+                    )
+                    started, position, claimed = player.enqueue_or_claim(chat_id, track)
+                    if started and claimed is not None:
+                        try:
+                            calls.play(chat_id, claimed.path)
+                        except Exception:
+                            player.rollback_claim(chat_id, claimed)
+                            raise
+                        owns_job = False
+                        _send_now(bot, chat_id, claimed)
+                    else:
+                        owns_job = False
+                        bot.send_message(chat_id, f"➕ تمت الإضافة: {track.title}\n📋 الترتيب: {position}")
+                except Exception:
+                    if owns_job:
+                        cleanup_job(job)
+                    raise
+                finally:
+                    try: bot.delete_message(chat_id, status.message_id)
+                    except Exception: pass
+                return True
+
+            if action == "download":
+                if not arg:
+                    bot.reply_to(message, "📥 اكتب اسم الأغنية بعد الأمر.\nمثال: يوت حسين الجسمي")
+                    return True
+                bot.send_chat_action(chat_id, "upload_document")
+                status = bot.reply_to(message, "📥 جاري تجهيز الملف...")
+                job = None
+                try:
+                    info, path, job = download_audio(arg)
+                    title = info.get("title") or "audio"
+                    with open(path, "rb") as audio:
+                        bot.send_audio(chat_id, audio, title=title, performer=info.get("uploader") or None)
+                finally:
+                    cleanup_job(job)
+                    try: bot.delete_message(chat_id, status.message_id)
+                    except Exception: pass
+                return True
+
+            if action == "skip":
+                if player.current(chat_id) is None and not player.queue(chat_id):
+                    bot.reply_to(message, "ℹ️ لا توجد أغنية لتخطيها.")
+                    return True
+                next_track = player.skip_and_take_next(chat_id)
+                if next_track:
+                    try:
+                        calls.play(chat_id, next_track.path)
+                    except Exception:
+                        player.stop(chat_id)
+                        raise
+                    _send_now(bot, chat_id, next_track)
+                else:
+                    try: calls.leave(chat_id)
+                    except Exception: pass
+                    _send_now(bot, chat_id, None)
+                return True
+
+            if action == "stop":
+                try: calls.leave(chat_id)
+                except Exception: pass
+                player.stop(chat_id)
+                bot.reply_to(message, "⏹️ تم إيقاف التشغيل.")
+                return True
+
+            if action == "pause":
+                if player.current(chat_id) is None:
+                    bot.reply_to(message, "ℹ️ لا توجد أغنية قيد التشغيل.")
+                    return True
+                calls.pause(chat_id); bot.reply_to(message, "⏸️ تم الإيقاف المؤقت.")
+                return True
+
+            if action == "resume":
+                if player.current(chat_id) is None:
+                    bot.reply_to(message, "ℹ️ لا توجد أغنية متوقفة.")
+                    return True
+                calls.resume(chat_id); bot.reply_to(message, "▶️ تم الاستئناف.")
+                return True
+
+            if action == "queue":
+                _send_queue(bot, player, chat_id)
+                return True
+
+            if action == "clear":
+                # Stop playback, leave voice chat, and clear the complete queue.
+                try: calls.leave(chat_id)
+                except Exception: pass
+                player.stop(chat_id)
+                bot.reply_to(message, "🗑️ تم مسح قائمة التشغيل وإيقاف التشغيل.")
+                return True
+
+            if action in {"join", "leave"}:
+                if action == "join":
+                    bot.reply_to(message, "ℹ️ اكتب: شغل اسم الأغنية — وسيدخل المساعد للمحادثة الصوتية تلقائياً.")
+                else:
+                    calls.leave(chat_id); player.stop(chat_id); bot.reply_to(message, "👋 تم الخروج من المحادثة الصوتية.")
+                return True
+        except RuntimeError as exc:
+            bot.reply_to(message, "❌ قائمة التشغيل ممتلئة." if str(exc) == "QUEUE_FULL" else f"❌ فشل التنفيذ: {exc}")
+        except Exception:
+            log.exception("natural music command failed: %s", raw)
+            bot.reply_to(message, "❌ صار خطأ أثناء تنفيذ الأمر.")
+        return True
+
+    @bot.message_handler(content_types=["text", "photo", "animation"])
     def message_router(message):
         if _handle_pending(bot, message): return
         save_user(message.from_user); save_chat(message.chat)
-
-        # تشغيل ملف صوتي بالرد عليه: شغل / تشغيل
-        text = (message.text or "").strip()
-        normalized = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا").strip()
-        if normalized in {"شغل", "تشغيل"}:
-            if not require_group(bot, message) or not user_can_play(message):
-                if message.chat.type in {"group", "supergroup"} and not user_can_play(message):
-                    bot.reply_to(message, "🚫 ليست لديك صلاحية التشغيل.")
-                return
-
-            replied = getattr(message, "reply_to_message", None)
-            if replied is None:
-                bot.reply_to(message, "↩️ رد على ملف صوتي أو MP3 واكتب: شغل")
-                return
-
-            audio = getattr(replied, "audio", None)
-            document = getattr(replied, "document", None)
-            file_obj = audio or (document if document and (getattr(document, "mime_type", "") or "").startswith("audio/") else None)
-            if file_obj is None:
-                bot.reply_to(message, "❌ الرسالة المردود عليها ليست ملفاً صوتياً أو MP3.")
-                return
-
-            try:
-                file_info = bot.get_file(file_obj.file_id)
-                raw = bot.download_file(file_info.file_path)
-                if not raw:
-                    raise RuntimeError("EMPTY_FILE")
-                from config import DOWNLOAD_DIR
-                from pathlib import Path
-                import uuid
-                DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-                suffix = Path(getattr(file_info, "file_path", "")).suffix or ".mp3"
-                local_path = DOWNLOAD_DIR / f"telegram_{message.chat.id}_{uuid.uuid4().hex}{suffix}"
-                local_path.write_bytes(raw)
-
-                title = getattr(file_obj, "title", None) or getattr(file_obj, "file_name", None) or "ملف صوتي"
-                duration = int(getattr(file_obj, "duration", 0) or 0)
-                track = Track(
-                    title=title, duration=duration, path=str(local_path), job=None,
-                    requester_id=message.from_user.id, source_url="",
-                )
-                started, position, claimed = player.enqueue_or_claim(message.chat.id, track)
-                if started and claimed is not None:
-                    try:
-                        calls.play(message.chat.id, claimed.path)
-                    except Exception:
-                        player.rollback_claim(message.chat.id, claimed)
-                        raise
-                    _send_now(bot, message.chat.id, claimed)
-                else:
-                    bot.reply_to(message, f"➕ تمت إضافة الملف إلى القائمة.\n📋 الترتيب: {position}")
-            except Exception:
-                log.exception("telegram audio reply playback failed")
-                bot.reply_to(message, "❌ تعذر تحميل الملف أو تشغيله. تأكد أن الملف صوتي صالح وحاول مرة أخرى.")
-            return
-
-        if text and text.startswith("/"):
+        if _text_music_command(message): return
+        if message.text and message.text.startswith("/"):
             bot.reply_to(message, "ℹ️ هذا الأمر غير موجود.")
+
+    @bot.channel_post_handler(content_types=["text"])
+    def channel_music_command(message):
+        # Telegram channel posts do not carry from_user; natural commands are
+        # accepted here so channel admins can control the same chat queue.
+        _text_music_command(message)
 
     @bot.callback_query_handler(func=lambda call: True)
     def callback_router(call):
@@ -483,3 +737,4 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
         alert(bot,call,"ℹ️ الطلب غير معروف.")
 
     calls.set_stream_end_handler(lambda chat_id: _stream_end(bot, calls, player, chat_id))
+
