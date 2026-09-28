@@ -37,10 +37,16 @@ def admin_text() -> str:
 
 
 def playback_markup():
+    # Single source of truth: the developer panel owns playback-panel callbacks.
+    from developer_panel import playback_settings_markup
+    return playback_settings_markup()
+
+
+def users_markup():
     keyboard = types.InlineKeyboardMarkup(row_width=1)
-    keyboard.add(types.InlineKeyboardButton("✍️ الكتابة: الاسم + الرابط", callback_data="play_credit_pair"))
-    keyboard.add(types.InlineKeyboardButton("🎵 زر الموسيقى: الاسم + الرابط", callback_data="play_music_pair"))
-    keyboard.add(types.InlineKeyboardButton("🖼️ صورة لوحة التشغيل", callback_data="play_set_image"))
+    keyboard.add(types.InlineKeyboardButton("🚫 حظر مستخدم", callback_data="user_ban"))
+    keyboard.add(types.InlineKeyboardButton("✅ رفع الحظر", callback_data="user_unban"))
+    keyboard.add(types.InlineKeyboardButton("📋 المحظورون", callback_data="user_banned"))
     keyboard.add(types.InlineKeyboardButton("↩️ الرئيسية", callback_data="adm_home"))
     return keyboard
 
