@@ -13,13 +13,12 @@ import threading
 from concurrent.futures import Future
 from typing import Any, Awaitable, Callable
 
-from pyrogram import Client, enums
+from pyrogram import Client
 
 # PyTgCalls 2.3.3 is paired with PyrogramMod 2.4.1 in requirements.txt.
 # PyrogramMod provides the Pyrogram-compatible ``pyrogram`` module and
 # the exception names expected by this PyTgCalls release.
 from pytgcalls import PyTgCalls
-from pytgcalls.types import MediaStream
 
 from config import API_HASH, API_ID, CALLS_READY_TIMEOUT, SESSION_STRING
 
@@ -36,18 +35,29 @@ class VoiceCallRunner:
         self.error: BaseException | None = None
         self._stop = threading.Event()
         self._stream_end_handler: Callable[[int], Awaitable[None] | None] | None = None
+        self._state_lock = threading.RLock()
 
     def set_stream_end_handler(self, handler: Callable[[int], Awaitable[None] | None]) -> None:
         self._stream_end_handler = handler
 
     def start(self) -> None:
+        # A previous runtime may have exited and closed its event loop.
+        # Never reuse that stale loop; start a fresh runtime instead.
         if self.thread and self.thread.is_alive():
             if not self.ready.wait(CALLS_READY_TIMEOUT):
                 raise RuntimeError("Voice runtime is already starting but did not become ready")
             self._raise_if_failed()
             return
-        self.thread = threading.Thread(target=self._worker, name="mtproto-calls", daemon=True)
-        self.thread.start()
+        with self._state_lock:
+            self.error = None
+            self.ready.clear()
+            self._stop.clear()
+            self.loop = None
+            self.calls = None
+            self.assistant = None
+            self.thread = threading.Thread(target=self._worker, name="mtproto-calls", daemon=True)
+            thread = self.thread
+        thread.start()
         if not self.ready.wait(CALLS_READY_TIMEOUT):
             raise RuntimeError(f"MTProto/PyTgCalls did not become ready within {CALLS_READY_TIMEOUT}s")
         self._raise_if_failed()
@@ -99,27 +109,48 @@ class VoiceCallRunner:
             self.ready.set()
             log.exception("Voice runtime failed")
         finally:
+            # Shutdown must happen on the worker's own loop, and cleanup must
+            # tolerate a loop that has already stopped after an exception.
+            loop = self.loop
             try:
-                if self.calls is not None:
+                if self.calls is not None and loop is not None and not loop.is_closed():
                     result = self.calls.stop()
-                    self.loop.run_until_complete(self._maybe_await(result))
+                    if inspect.isawaitable(result):
+                        loop.run_until_complete(result)
             except BaseException:
                 log.exception("PyTgCalls stop failed")
             try:
-                if self.assistant is not None and self.assistant.is_connected:
+                if (self.assistant is not None and self.assistant.is_connected
+                        and loop is not None and not loop.is_closed()):
                     result = self.assistant.stop()
-                    self.loop.run_until_complete(self._maybe_await(result))
+                    if inspect.isawaitable(result):
+                        loop.run_until_complete(result)
             except BaseException:
                 log.exception("Pyrogram stop failed")
-            if self.loop is not None:
-                self.loop.close()
+            finally:
+                if loop is not None and not loop.is_closed():
+                    try:
+                        loop.close()
+                    except BaseException:
+                        log.exception("Event loop close failed")
                 asyncio.set_event_loop(None)
+                with self._state_lock:
+                    # Do not leave a closed loop marked as usable.
+                    self.loop = None
+                    self.calls = None
+                    self.assistant = None
+                    self.ready.clear()
 
     def call(self, method: str, *args: Any, **kwargs: Any) -> Any:
         """Execute a PyTgCalls method on its owning event-loop thread."""
-        if self.loop is None or self.calls is None or not self.ready.is_set():
-            raise RuntimeError("Voice runtime is not ready")
-        if threading.current_thread() is self.thread:
+        loop = self.loop
+        calls = self.calls
+        thread = self.thread
+        if (loop is None or loop.is_closed() or not loop.is_running()
+                or calls is None or not self.ready.is_set()
+                or thread is None or not thread.is_alive()):
+            raise RuntimeError("Voice runtime is not ready (event loop is closed or stopped)")
+        if threading.current_thread() is thread:
             value = self._direct_call(method, *args, **kwargs)
             if inspect.isawaitable(value):
                 raise RuntimeError(
@@ -132,6 +163,8 @@ class VoiceCallRunner:
 
         def runner() -> None:
             try:
+                if loop.is_closed():
+                    raise RuntimeError("Voice runtime event loop is closed")
                 value = self._direct_call(method, *args, **kwargs)
                 if inspect.isawaitable(value):
                     task = asyncio.ensure_future(value)
@@ -141,7 +174,12 @@ class VoiceCallRunner:
             except BaseException as exc:
                 future.set_exception(exc)
 
-        self.loop.call_soon_threadsafe(runner)
+        try:
+            loop.call_soon_threadsafe(runner)
+        except RuntimeError as exc:
+            if "closed" in str(exc).lower():
+                raise RuntimeError("Voice runtime event loop is closed") from exc
+            raise
         return future.result(timeout=60)
 
     @staticmethod
@@ -169,72 +207,8 @@ class VoiceCallRunner:
     async def aplay(self, chat_id: int, stream: Any) -> Any:
         return await self.acall("play", int(chat_id), stream)
 
-    def play(self, chat_id: int, stream: Any, start_seconds: int = 0) -> Any:
-        """Start a local/remote stream, optionally from an offset.
-
-        PyTgCalls does not expose a portable seek method in this release.
-        Seeking is therefore implemented by restarting the same source with
-        FFmpeg's ``-ss`` input offset. This keeps the call on the same
-        PyTgCalls event loop and avoids private/internal APIs.
-        """
-        offset = max(0, int(start_seconds or 0))
-        if offset:
-            stream = MediaStream(
-                stream,
-                video_flags=MediaStream.Flags.IGNORE,
-                ffmpeg_parameters=f"-ss {offset}",
-            )
+    def play(self, chat_id: int, stream: Any) -> Any:
         return self.call("play", int(chat_id), stream)
-
-    async def _assistant_member_status(self, chat_id: int) -> Any:
-        if self.assistant is None:
-            raise RuntimeError("Pyrogram assistant is unavailable")
-        return await self.assistant.get_chat_member(int(chat_id), "me")
-
-    async def _ensure_assistant_member(self, chat_id: int, invite_link: str) -> bool:
-        """Ensure the user-account assistant is a member of this chat.
-
-        The assistant cannot add itself. The Bot API side creates a temporary
-        invite link, then this already-authorized user session joins through it.
-        Telegram still requires the bot to be an administrator able to invite
-        users; this code never attempts to bypass Telegram permissions.
-        """
-        if self.assistant is None:
-            raise RuntimeError("Pyrogram assistant is unavailable")
-        try:
-            member = await self._assistant_member_status(chat_id)
-            if member.status in {
-                enums.ChatMemberStatus.MEMBER,
-                enums.ChatMemberStatus.ADMINISTRATOR,
-                enums.ChatMemberStatus.OWNER,
-            }:
-                return True
-        except Exception:
-            pass
-
-        if not invite_link:
-            raise RuntimeError("ASSISTANT_INVITE_REQUIRED")
-
-        await self.assistant.join_chat(invite_link)
-        member = await self._assistant_member_status(chat_id)
-        if member.status not in {
-            enums.ChatMemberStatus.MEMBER,
-            enums.ChatMemberStatus.ADMINISTRATOR,
-            enums.ChatMemberStatus.OWNER,
-        }:
-            raise RuntimeError("ASSISTANT_JOIN_FAILED")
-        return True
-
-    def ensure_assistant_member(self, chat_id: int, invite_link: str) -> bool:
-        """Synchronously ensure the assistant has joined the target group."""
-        if self.loop is None or self.assistant is None or not self.ready.is_set():
-            raise RuntimeError("Voice runtime is not ready")
-        if threading.current_thread() is self.thread:
-            raise RuntimeError("ensure_assistant_member cannot run on the calls event-loop thread")
-        future = asyncio.run_coroutine_threadsafe(
-            self._ensure_assistant_member(int(chat_id), invite_link), self.loop
-        )
-        return bool(future.result(timeout=45))
 
     def pause(self, chat_id: int) -> Any:
         return self.call("pause", int(chat_id))
