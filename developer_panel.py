@@ -6,6 +6,7 @@ from telebot import types
 
 from config import DEVELOPER_ID
 from database import (
+    PERMISSION_GROUPS,
     PERMISSIONS,
     add_sudo,
     add_subscription,
@@ -18,6 +19,7 @@ from database import (
     set_pending,
     remove_sudo,
     set_permission,
+    set_all_permissions,
     setting_set,
     subscriptions,
 )
@@ -78,7 +80,7 @@ def main_markup():
         types.InlineKeyboardButton("📢 الاشتراك الإجباري", callback_data="dev_forced_sub"),
     )
     m.add(
-        types.InlineKeyboardButton("⚙️ حقوق الخاص", callback_data="dev_private_rights"),
+        types.InlineKeyboardButton("🔐 الحقوق", callback_data="dev_rights"),
         types.InlineKeyboardButton("❌ إغلاق", callback_data="close_menu"),
     )
     return m
@@ -482,6 +484,65 @@ def add_forced_channel_from_message(bot, message):
     return True
 
 
+def _rights_group_label(group):
+    return {
+        "playback": "🎵 التشغيل", "users": "👥 المستخدمون",
+        "admins": "👨‍💻 المشرفون", "broadcast": "📣 الإذاعة",
+        "subscriptions": "🔒 الاشتراك الإجباري", "stats": "📊 الإحصائيات",
+        "user_panel": "👤 لوحة /start", "playback_panel": "🎛️ تخصيص التشغيل",
+        "settings": "⚙️ الإعدادات", "sources": "🌐 المصادر",
+        "channels": "📢 القنوات", "social": "🔗 الروابط",
+    }.get(group, group)
+
+
+def rights_markup(uid: int):
+    m = types.InlineKeyboardMarkup(row_width=2)
+    for group in PERMISSION_GROUPS:
+        m.add(types.InlineKeyboardButton(_rights_group_label(group), callback_data=f"rights_group:{uid}:{group}"))
+    m.row(
+        types.InlineKeyboardButton("🟢 تفعيل الكل", callback_data=f"rights_all:{uid}:1"),
+        types.InlineKeyboardButton("🔴 تعطيل الكل", callback_data=f"rights_all:{uid}:0"),
+    )
+    m.add(types.InlineKeyboardButton("↩️ المشرفين", callback_data="dev_admins_menu"))
+    return m
+
+
+def rights_group_markup(uid: int, group: str):
+    state = get_permission_state(uid, int(DEVELOPER_ID))
+    m = types.InlineKeyboardMarkup(row_width=1)
+    for key, label in PERMISSION_GROUPS[group].items():
+        permission = f"{group}.{key}"
+        icon = "🟢" if state.get(permission, False) else "🔴"
+        m.add(types.InlineKeyboardButton(f"{icon} {label}", callback_data=f"rights_toggle:{uid}:{permission}"))
+    m.row(
+        types.InlineKeyboardButton("🟢 تفعيل القسم", callback_data=f"rights_group_all:{uid}:{group}:1"),
+        types.InlineKeyboardButton("🔴 تعطيل القسم", callback_data=f"rights_group_all:{uid}:{group}:0"),
+    )
+    m.add(types.InlineKeyboardButton("↩️ كل الأقسام", callback_data=f"admin_rights:{uid}"))
+    return m
+
+
+def show_rights(bot, call, uid):
+    bot.edit_message_text(
+        f"🔐 <b>حقوق المشرف {uid}</b>\n\nكل قسم له حقوق مستقلة.",
+        call.message.chat.id, call.message.message_id,
+        reply_markup=rights_markup(uid), parse_mode="HTML"
+    )
+
+
+def show_rights_admins(bot, call):
+    rows = []
+    for item in list_sudos():
+        uid = _admin_id(item)
+        rows.append([types.InlineKeyboardButton(f"👤 {uid}", callback_data=f"admin_rights:{uid}")])
+    rows.append([types.InlineKeyboardButton("↩️ رجوع", callback_data="back_to_main")])
+    bot.edit_message_text(
+        "🔐 <b>اختر المشرف الذي تريد تعديل حقوقه:</b>",
+        call.message.chat.id, call.message.message_id,
+        reply_markup=types.InlineKeyboardMarkup(rows), parse_mode="HTML"
+    )
+
+
 def show_private_rights(bot, call):
     bot.edit_message_text(
         "⚙️ <b>حقوق الخاص</b>\n\n"
@@ -606,8 +667,61 @@ def handle_callback(bot, call):
         bot.answer_callback_query(call.id)
         begin_playback_input(bot, call, "play_set_image", "🖼️ أرسل صورة أو GIF لوحة التشغيل:")
         return True
-    if data == "dev_private_rights":
-        bot.answer_callback_query(call.id); show_private_rights(bot, call); return True
+    if data == "dev_rights":
+        bot.answer_callback_query(call.id); show_rights_admins(bot, call); return True
+    if data.startswith("admin_rights:"):
+        bot.answer_callback_query(call.id)
+        show_rights(bot, call, int(data.split(":", 1)[1]))
+        return True
+    if data.startswith("rights_group:"):
+        _, raw_uid, group = data.split(":", 2)
+        bot.answer_callback_query(call.id)
+        if group not in PERMISSION_GROUPS:
+            bot.answer_callback_query(call.id, "قسم غير معروف.", show_alert=True); return True
+        bot.edit_message_text(
+            f"🔐 <b>{_rights_group_label(group)}</b>\n\nاختر الحق المطلوب:",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=rights_group_markup(int(raw_uid), group), parse_mode="HTML"
+        )
+        return True
+    if data.startswith("rights_toggle:"):
+        _, raw_uid, permission = data.split(":", 2)
+        uid = int(raw_uid)
+        if uid == int(DEVELOPER_ID):
+            bot.answer_callback_query(call.id, "المطور لديه كل الحقوق دائماً.", show_alert=True); return True
+        state = get_permission_state(uid, int(DEVELOPER_ID))
+        current = bool(state.get(permission, False))
+        set_permission(uid, permission, not current)
+        bot.answer_callback_query(call.id, "تم تحديث الحق.")
+        group = permission.split(".", 1)[0]
+        bot.edit_message_reply_markup(
+            call.message.chat.id, call.message.message_id,
+            reply_markup=rights_group_markup(uid, group)
+        )
+        return True
+    if data.startswith("rights_group_all:"):
+        _, raw_uid, group, raw_value = data.split(":", 3)
+        uid = int(raw_uid)
+        if uid == int(DEVELOPER_ID):
+            bot.answer_callback_query(call.id, "المطور لديه كل الحقوق دائماً.", show_alert=True); return True
+        value = raw_value == "1"
+        for key in PERMISSION_GROUPS[group]:
+            set_permission(uid, f"{group}.{key}", value)
+        bot.answer_callback_query(call.id, "تم تحديث حقوق القسم.")
+        bot.edit_message_reply_markup(
+            call.message.chat.id, call.message.message_id,
+            reply_markup=rights_group_markup(uid, group)
+        )
+        return True
+    if data.startswith("rights_all:"):
+        _, raw_uid, raw_value = data.split(":", 2)
+        uid = int(raw_uid)
+        if uid == int(DEVELOPER_ID):
+            bot.answer_callback_query(call.id, "المطور لديه كل الحقوق دائماً.", show_alert=True); return True
+        set_all_permissions(uid, raw_value == "1")
+        bot.answer_callback_query(call.id, "تم تحديث كل الحقوق.")
+        show_rights(bot, call, uid)
+        return True
     if data == "back_to_main":
         bot.answer_callback_query(call.id); _back_to_main(bot, call); return True
     if data == "close_menu":
@@ -688,18 +802,6 @@ developer_panel_markup = main_markup
 dev_main_panel = open_panel
 dev_callbacks_handler = handle_callback
 handle_admin_inputs = handle_input
-# Keep one canonical playback-panel builder so old imports cannot drift.
-playback_markup = playback_settings_markup
-
-__all__ = [
-    "DEV_IDS", "PERMISSION_LABELS", "MAIN_TEXT",
-    "main_markup", "developer_markup", "developer_panel_markup",
-    "open_panel", "dev_main_panel", "admin_text", "admins_menu",
-    "permissions_select_markup", "permission_markup",
-    "handle_callback", "dev_callbacks_handler",
-    "handle_input", "handle_admin_inputs",
-    "playback_settings_markup", "playback_markup", "show_playback_settings",
-]
 
 __all__ = [
     "DEV_IDS", "PERMISSION_LABELS", "main_markup", "developer_panel_markup",
