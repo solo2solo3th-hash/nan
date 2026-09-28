@@ -1,361 +1,595 @@
-"""Developer control panel with granular per-button/per-action permissions."""
+"""Developer panel adapted from the supplied panel and integrated with this bot's SQLite/TeleBot architecture."""
+
 from __future__ import annotations
+
 from telebot import types
-from config import DEVELOPER_ID, SUPPORTED_AUDIO_SOURCES
+
+from config import DEVELOPER_ID
 from database import (
-    PERMISSION_GROUPS, PERMISSIONS, add_sudo, add_subscription, counts,
-    delete_subscription, get_pending, get_permission_state, list_sudos,
-    remove_sudo, set_all_permissions, set_pending, set_permission,
-    setting_get, setting_set, clear_pending, subscriptions,
+    PERMISSIONS,
+    add_sudo,
+    add_subscription,
+    counts,
+    delete_subscription,
+    get_permission_state,
+    get_pending,
+    clear_pending,
+    list_sudos,
+    set_pending,
+    remove_sudo,
+    set_permission,
+    setting_set,
+    subscriptions,
 )
 
 DEV_IDS = {int(DEVELOPER_ID)}
+
+PERMISSION_LABELS = {
+    "users": "👥 إدارة المستخدمين",
+    "channels": "📢 إدارة القنوات",
+    "subscriptions": "🔒 الاشتراك الإجباري",
+    "broadcast": "📣 الإذاعة",
+    "stats": "📊 الإحصائيات",
+    "social": "🌐 السوشيال",
+    "admins": "👨‍💻 إدارة المشرفين",
+    "settings": "⚙️ إعدادات البوت",
+    "user_panel": "👤 لوحة العضو",
+    "playback": "🎵 التحكم بالتشغيل",
+}
+
+def pending_input_set(user_id: int, state: str | None) -> None:
+    if state is None:
+        clear_pending(user_id)
+    else:
+        set_pending(user_id, state, None, None)
+
+
+def pending_input_get(user_id: int):
+    pending = get_pending(user_id)
+    return pending[0] if pending else None
+
+
+def list_sudo():
+    return list_sudos()
+
+
+def get_permissions(user_id: int):
+    return get_permission_state(user_id, int(DEVELOPER_ID))
+
+
+MAIN_TEXT = (
+    "⚡ <b>أهلاً بك يا مطورنا في لوحة التحكم المركزية</b>\n\n"
+    "اختر أحد الأقسام أدناه للتحكم بكافة تفاصيل البوت:"
+)
 
 
 def is_developer(user_id: int) -> bool:
     return int(user_id) in DEV_IDS
 
 
-def _pending(uid: int, mode: str | None):
-    if mode is None:
-        clear_pending(uid)
-    else:
-        set_pending(uid, mode, None, None)
-
-
-def _uid(row):
-    return int(row[0]) if isinstance(row, (tuple, list)) else int(row)
-
-
-def _valid_url(value: str) -> bool:
-    return value.startswith(("https://", "http://", "tg://"))
-
-
 def main_markup():
     m = types.InlineKeyboardMarkup(row_width=2)
-    m.row(types.InlineKeyboardButton("📊 الإحصائيات", callback_data="dev_stats"),
-          types.InlineKeyboardButton("📣 الإذاعة", callback_data="dev_broadcast"))
-    m.row(types.InlineKeyboardButton("👨‍💻 المشرفين", callback_data="dev_admins"),
-          types.InlineKeyboardButton("🔐 الحقوق", callback_data="dev_rights"))
-    m.row(types.InlineKeyboardButton("🔒 الاشتراك الإجباري", callback_data="dev_subs"),
-          types.InlineKeyboardButton("🎵 لوحة التشغيل", callback_data="dev_playback"))
-    m.row(types.InlineKeyboardButton("👤 لوحة /start", callback_data="dev_start_panel"),
-          types.InlineKeyboardButton("❌ إغلاق", callback_data="dev_close"))
+    m.add(
+        types.InlineKeyboardButton("📊 إحصائيات البوت", callback_data="dev_stats"),
+        types.InlineKeyboardButton("📢 قسم الإذاعة", callback_data="dev_broadcast_menu"),
+    )
+    m.add(
+        types.InlineKeyboardButton("👥 إدارة المشرفين", callback_data="dev_admins_menu"),
+        types.InlineKeyboardButton("📢 الاشتراك الإجباري", callback_data="dev_forced_sub"),
+    )
+    m.add(
+        types.InlineKeyboardButton("⚙️ حقوق الخاص", callback_data="dev_private_rights"),
+        types.InlineKeyboardButton("❌ إغلاق", callback_data="close_menu"),
+    )
     return m
 
 
-def _back(target="dev_main"):
-    return types.InlineKeyboardMarkup([[types.InlineKeyboardButton("↩️ رجوع", callback_data=target)]])
+def back_markup(target="back_to_main"):
+    return types.InlineKeyboardMarkup(
+        [[types.InlineKeyboardButton("🔙 رجوع", callback_data=target)]]
+    )
+
+
+def cancel_markup(target):
+    return types.InlineKeyboardMarkup(
+        [[types.InlineKeyboardButton("❌ إلغاء", callback_data=target)]]
+    )
+
+
+def admins_markup():
+    m = types.InlineKeyboardMarkup(row_width=1)
+    m.add(
+        types.InlineKeyboardButton("➕ صعد مشرف جديد", callback_data="admin_add"),
+        types.InlineKeyboardButton("➖ شيل مشرف", callback_data="admin_remove"),
+        types.InlineKeyboardButton("📋 رؤية المشرفين وصلاحياتهم", callback_data="admin_list"),
+        types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"),
+    )
+    return m
+
+
+def broadcast_markup():
+    m = types.InlineKeyboardMarkup(row_width=1)
+    m.add(
+        types.InlineKeyboardButton("📢 إذاعة للكل (أعضاء وبوتات وقنوات)", callback_data="bc_all"),
+        types.InlineKeyboardButton("👤 إذاعة للأعضاء فقط", callback_data="bc_users"),
+        types.InlineKeyboardButton("📢 إذاعة للقنوات فقط", callback_data="bc_channels"),
+        types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"),
+    )
+    return m
+
+
+def _counts():
+    try:
+        result = counts()
+        if isinstance(result, dict):
+            return {
+                "users": int(result.get("users", 0)),
+                "chats": int(result.get("chats", 0)),
+                "admins": int(result.get("admins", len(list_sudos()))),
+            }
+        users, chats, admins = result
+        return {"users": int(users), "chats": int(chats), "admins": int(admins)}
+    except Exception:
+        return {"users": 0, "chats": 0, "admins": len(list_sudos())}
+
+
+def statistics_text():
+    s = _counts()
+    return (
+        "📊 <b>إحصائيات البوت:</b>\n\n"
+        f"👤 عدد الأعضاء: <code>{s['users']}</code>\n"
+        f"💬 عدد المحادثات: <code>{s['chats']}</code>\n"
+        f"🛡️ عدد المشرفين: <code>{s['admins']}</code>"
+    )
+
+
+def show_statistics(bot, call):
+    m = types.InlineKeyboardMarkup()
+    m.add(types.InlineKeyboardButton("🔄 تحديث الإحصائيات", callback_data="dev_stats"))
+    m.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
+    bot.edit_message_text(
+        statistics_text(), call.message.chat.id, call.message.message_id,
+        reply_markup=m, parse_mode="HTML"
+    )
+
+
+def show_broadcast_menu(bot, call):
+    bot.edit_message_text(
+        "📢 <b>اختر نوع الإذاعة التي تريد إرسالها:</b>",
+        call.message.chat.id, call.message.message_id,
+        reply_markup=broadcast_markup(), parse_mode="HTML"
+    )
+
+
+def begin_broadcast(bot, call, target):
+    pending_input_set(call.from_user.id, f"waiting_broadcast_{target}")
+    bot.edit_message_text(
+        "✍️ <b>أرسل الآن الرسالة المراد إذاعتها.</b>\n"
+        "يمكن أن تكون نص، صورة، فيديو، ملف، صوت أو فويس.",
+        call.message.chat.id, call.message.message_id,
+        reply_markup=cancel_markup("dev_broadcast_menu"), parse_mode="HTML"
+    )
+
+
+def _admin_id(item):
+    if isinstance(item, (tuple, list)):
+        return int(item[0])
+    if isinstance(item, dict):
+        return int(item.get("user_id", item.get("id")))
+    return int(item)
+
+
+def admins_text():
+    admins = list_sudos()
+    if not admins:
+        return "📋 <b>قائمة المشرفين وصلاحياتهم:</b>\n\nلا يوجد مشرفون."
+
+    lines = ["📋 <b>قائمة المشرفين وصلاحياتهم:</b>", ""]
+    for item in admins:
+        uid = _admin_id(item)
+        perms = get_permission_state(uid, int(DEVELOPER_ID))
+        enabled = [
+            PERMISSION_LABELS.get(k, k)
+            for k, v in perms.items() if v
+        ]
+        lines.append(
+            f"• <code>{uid}</code> — "
+            + (", ".join(enabled) if enabled else "بدون صلاحيات")
+        )
+    return "\n".join(lines)
+
+
+def show_admins_menu(bot, call):
+    bot.edit_message_text(
+        "🛡️ <b>إدارة المشرفين والصلاحيات:</b>",
+        call.message.chat.id, call.message.message_id,
+        reply_markup=admins_markup(), parse_mode="HTML"
+    )
+
+
+def show_admin_list(bot, call):
+    rows = []
+    for item in list_sudos():
+        uid = _admin_id(item)
+        rows.append([
+            types.InlineKeyboardButton(
+                f"👤 {uid}", callback_data=f"admin_perms:{uid}"
+            )
+        ])
+    rows.append([types.InlineKeyboardButton("🔙 رجوع", callback_data="dev_admins_menu")])
+    bot.edit_message_text(
+        admins_text(), call.message.chat.id, call.message.message_id,
+        reply_markup=types.InlineKeyboardMarkup(rows), parse_mode="HTML"
+    )
+
+
+def begin_add_admin(bot, call):
+    pending_input_set(call.from_user.id, "waiting_add_admin")
+    bot.edit_message_text(
+        "🆔 <b>أرسل آيدي (ID) الشخص الذي تريد ترقيته مشرفاً:</b>",
+        call.message.chat.id, call.message.message_id,
+        reply_markup=cancel_markup("dev_admins_menu"), parse_mode="HTML"
+    )
+
+
+def begin_remove_admin(bot, call):
+    pending_input_set(call.from_user.id, "waiting_remove_admin")
+    bot.edit_message_text(
+        "🆔 <b>أرسل آيدي المشرف المراد إزالته:</b>",
+        call.message.chat.id, call.message.message_id,
+        reply_markup=cancel_markup("dev_admins_menu"), parse_mode="HTML"
+    )
+
+
+def add_admin_from_message(bot, message):
+    if get_pending(message.from_user.id) != "waiting_add_admin":
+        return False
+
+    try:
+        uid = int((message.text or "").strip())
+        if uid <= 0:
+            raise ValueError
+    except ValueError:
+        bot.reply_to(message, "⚠️ أرسل آيدي صحيح (أرقام فقط).")
+        return True
+
+    if uid == int(DEVELOPER_ID):
+        pending_input_set(message.from_user.id, None)
+        bot.reply_to(message, "ℹ️ هذا هو المطور الأساسي أصلاً.")
+        return True
+
+    try:
+        add_sudo(uid, message.from_user.id)
+        permission_keys = list(PERMISSIONS.keys()) if isinstance(PERMISSIONS, dict) else list(PERMISSIONS)
+        for key in permission_keys:
+            set_permission(uid, key, False)
+    except Exception as exc:
+        bot.reply_to(message, f"❌ تعذر إضافة المشرف: {exc}")
+        return True
+
+    pending_input_set(message.from_user.id, None)
+    m = types.InlineKeyboardMarkup()
+    m.add(types.InlineKeyboardButton("⚙️ إدارة الصلاحيات", callback_data=f"admin_perms:{uid}"))
+    m.add(types.InlineKeyboardButton("🔙 إدارة المشرفين", callback_data="dev_admins_menu"))
+    bot.reply_to(
+        message,
+        f"✅ تم رفع المستخدم <code>{uid}</code> مشرفاً بنجاح!\n"
+        "⚠️ المشرف يبدأ بدون صلاحيات.",
+        reply_markup=m, parse_mode="HTML"
+    )
+    return True
+
+
+def remove_admin_from_message(bot, message):
+    if get_pending(message.from_user.id) != "waiting_remove_admin":
+        return False
+
+    try:
+        uid = int((message.text or "").strip())
+    except ValueError:
+        bot.reply_to(message, "⚠️ أرسل آيدي صحيح (أرقام فقط).")
+        return True
+
+    if uid == int(DEVELOPER_ID):
+        bot.reply_to(message, "⛔ لا يمكن حذف المطور الأساسي.")
+        return True
+
+    admin_ids = {_admin_id(x) for x in list_sudos()}
+    if uid not in admin_ids:
+        bot.reply_to(message, "⚠️ هذا الآيدي غير موجود في قائمة المشرفين.")
+        return True
+
+    try:
+        remove_sudo(uid)
+    except Exception as exc:
+        bot.reply_to(message, f"❌ تعذر حذف المشرف: {exc}")
+        return True
+
+    pending_input_set(message.from_user.id, None)
+    bot.reply_to(message, f"✅ تم تنزيل المشرف <code>{uid}</code> بنجاح.", parse_mode="HTML")
+    return True
+
+
+def permissions_markup(uid):
+    perms = get_permission_state(uid, int(DEVELOPER_ID))
+    rows = []
+    permission_keys = list(PERMISSIONS.keys()) if isinstance(PERMISSIONS, dict) else list(PERMISSIONS)
+    for key in permission_keys:
+        label = PERMISSION_LABELS.get(key, key)
+        icon = "🟢" if perms.get(key) else "🔴"
+        rows.append([
+            types.InlineKeyboardButton(
+                f"{icon} {label}",
+                callback_data=f"toggle_perm:{uid}:{key}"
+            )
+        ])
+    rows.append([types.InlineKeyboardButton("🔙 قائمة المشرفين", callback_data="admin_list")])
+    return types.InlineKeyboardMarkup(rows)
+
+
+def show_permissions(bot, call, uid):
+    if uid == int(DEVELOPER_ID):
+        bot.edit_message_text(
+            "👑 <b>المطور الأساسي</b>\n\n"
+            "المطور يمتلك تحكماً كاملاً دائماً.",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=back_markup("admin_list"), parse_mode="HTML"
+        )
+        return
+
+    perms = get_permission_state(uid, int(DEVELOPER_ID))
+    active = sum(bool(v) for v in perms.values())
+    bot.edit_message_text(
+        f"⚙️ <b>صلاحيات المشرف</b>\n\n"
+        f"🆔 <code>{uid}</code>\n"
+        f"🟢 المفعلة: <code>{active}</code>\n\n"
+        "اضغط على الصلاحية لتفعيلها أو تعطيلها:",
+        call.message.chat.id, call.message.message_id,
+        reply_markup=permissions_markup(uid), parse_mode="HTML"
+    )
+
+
+def toggle_permission(bot, call, uid, key):
+    if uid == int(DEVELOPER_ID):
+        bot.answer_callback_query(call.id, "المطور لديه تحكم كامل.", show_alert=True)
+        return
+    if key not in PERMISSION_LABELS:
+        bot.answer_callback_query(call.id, "صلاحية غير معروفة.", show_alert=True)
+        return
+
+    current = bool(get_permission_state(uid, int(DEVELOPER_ID)).get(key))
+    set_permission(uid, key, not current)
+    bot.answer_callback_query(
+        call.id,
+        f"{PERMISSION_LABELS[key]}: " + ("تفعّلت 🟢" if not current else "تعطلت 🔴")
+    )
+    show_permissions(bot, call, uid)
+
+
+def _sub_id(item):
+    if isinstance(item, dict):
+        return item.get("id")
+    if isinstance(item, (tuple, list)) and item:
+        return item[0]
+    return None
+
+
+def _sub_target(item):
+    if isinstance(item, dict):
+        return item.get("target") or item.get("channel") or item.get("chat_id")
+    if isinstance(item, (tuple, list)):
+        return item[-1] if item else ""
+    return item
+
+
+def forced_sub_markup():
+    m = types.InlineKeyboardMarkup(row_width=1)
+    for item in subscriptions():
+        sid = _sub_id(item)
+        target = _sub_target(item)
+        if sid is not None:
+            m.add(types.InlineKeyboardButton(
+                f"❌ حذف {target}", callback_data=f"fs_remove:{target}"
+            ))
+    m.add(types.InlineKeyboardButton(
+        "🔗 تعيين قناة الاشتراك الإجباري", callback_data="set_fs_channel"
+    ))
+    m.add(types.InlineKeyboardButton("🔄 تحديث", callback_data="dev_forced_sub"))
+    m.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
+    return m
+
+
+def show_forced_sub(bot, call):
+    rows = subscriptions()
+    current = ", ".join(str(_sub_target(x)) for x in rows) if rows else "لا توجد قناة"
+    status = "مفعل 🟢" if rows else "معطل 🔴"
+    bot.edit_message_text(
+        "📢 <b>إعدادات الاشتراك الإجباري:</b>\n\n"
+        f"الحالة: <b>{status}</b>\n"
+        f"القنوات الحالية: <code>{current}</code>",
+        call.message.chat.id, call.message.message_id,
+        reply_markup=forced_sub_markup(), parse_mode="HTML"
+    )
+
+
+def begin_set_forced_channel(bot, call):
+    pending_input_set(call.from_user.id, "waiting_fs_channel")
+    bot.edit_message_text(
+        "🔗 <b>أرسل معرف قناة الاشتراك الإجباري:</b>\n\n"
+        "مثال: <code>@YourChannel</code>",
+        call.message.chat.id, call.message.message_id,
+        reply_markup=cancel_markup("dev_forced_sub"), parse_mode="HTML"
+    )
+
+
+def add_forced_channel_from_message(bot, message):
+    if get_pending(message.from_user.id) != "waiting_fs_channel":
+        return False
+
+    text = (message.text or "").strip()
+    if not text:
+        bot.reply_to(message, "⚠️ أرسل بيانات القناة.")
+        return True
+
+    parts = [p.strip() for p in text.split("|", 2)]
+    if len(parts) != 3 or not parts[0] or not parts[1] or not parts[2]:
+        bot.reply_to(message, "⚠️ الصيغة: اسم القناة | @channel أو -100... | رابط القناة")
+        return True
+
+    title, target, url = parts
+    if not target.startswith("@") and not target.lstrip("-").isdigit():
+        bot.reply_to(message, "⚠️ معرف القناة غير صحيح.")
+        return True
+
+    try:
+        add_subscription(title, target, url, True)
+    except Exception as exc:
+        bot.reply_to(message, f"❌ تعذر إضافة القناة: {exc}")
+        return True
+
+    pending_input_set(message.from_user.id, None)
+    bot.reply_to(message, f"✅ تمت إضافة <code>{target}</code> للاشتراك الإجباري.", parse_mode="HTML")
+    return True
+
+
+def show_private_rights(bot, call):
+    bot.edit_message_text(
+        "⚙️ <b>حقوق الخاص</b>\n\n"
+        "إعدادات صلاحيات الخاص ولوحة العضو يمكن التحكم بها من صلاحيات المشرفين.",
+        call.message.chat.id, call.message.message_id,
+        reply_markup=back_markup(), parse_mode="HTML"
+    )
 
 
 def open_panel(bot, message):
     if not is_developer(message.from_user.id):
         return False
-    bot.send_message(message.chat.id, "⚡ <b>لوحة المطور</b>\n\nتحكم كامل بكل أقسام البوت والحقوق.", reply_markup=main_markup(), parse_mode="HTML")
+    bot.send_message(
+        message.chat.id, MAIN_TEXT,
+        reply_markup=main_markup(), parse_mode="HTML"
+    )
     return True
 
 
-def _group_label(group):
-    return {
-        "playback":"🎵 التشغيل", "users":"👥 المستخدمون", "admins":"👨‍💻 المشرفون",
-        "broadcast":"📣 الإذاعة", "subscriptions":"🔒 الاشتراك الإجباري", "stats":"📊 الإحصائيات",
-        "user_panel":"👤 لوحة /start", "playback_panel":"🎛️ تخصيص التشغيل", "settings":"⚙️ الإعدادات",
-        "sources":"🌐 المصادر", "channels":"📢 القنوات", "social":"🔗 الروابط",
-    }.get(group, group)
+def _back_to_main(bot, call):
+    pending_input_set(call.from_user.id, None)
+    bot.edit_message_text(
+        MAIN_TEXT, call.message.chat.id, call.message.message_id,
+        reply_markup=main_markup(), parse_mode="HTML"
+    )
 
 
-def rights_markup(uid: int):
-    m=types.InlineKeyboardMarkup(row_width=2)
-    for group in PERMISSION_GROUPS:
-        m.add(types.InlineKeyboardButton(_group_label(group), callback_data=f"perm_group:{uid}:{group}"))
-    m.row(types.InlineKeyboardButton("🟢 تفعيل الكل", callback_data=f"perm_all:{uid}:1"),
-          types.InlineKeyboardButton("🔴 تعطيل الكل", callback_data=f"perm_all:{uid}:0"))
-    m.add(types.InlineKeyboardButton("↩️ المشرفين", callback_data="dev_admins_list"))
-    return m
-
-
-def group_markup(uid: int, group: str):
-    state=get_permission_state(uid,int(DEVELOPER_ID)); m=types.InlineKeyboardMarkup(row_width=1)
-    for key,label in PERMISSION_GROUPS[group].items():
-        p=f"{group}.{key}"; icon="🟢" if state.get(p,False) else "🔴"
-        m.add(types.InlineKeyboardButton(f"{icon} {label}", callback_data=f"perm_toggle:{uid}:{p}"))
-    m.row(types.InlineKeyboardButton("🟢 تفعيل القسم", callback_data=f"perm_group_all:{uid}:{group}:1"),
-          types.InlineKeyboardButton("🔴 تعطيل القسم", callback_data=f"perm_group_all:{uid}:{group}:0"))
-    m.add(types.InlineKeyboardButton("↩️ كل الأقسام", callback_data=f"admin_rights:{uid}"))
-    return m
-
-
-def show_rights(bot, call, uid):
-    bot.edit_message_text(f"🔐 <b>حقوق المشرف {uid}</b>\n\nكل زر/إجراء له حق مستقل.", call.message.chat.id, call.message.message_id, reply_markup=rights_markup(uid), parse_mode="HTML")
-
-
-def _admins_menu_impl():
-    m=types.InlineKeyboardMarkup(row_width=2)
-    m.row(types.InlineKeyboardButton("➕ إضافة", callback_data="admin_add"), types.InlineKeyboardButton("➖ حذف", callback_data="admin_remove"))
-    m.add(types.InlineKeyboardButton("📋 المشرفون", callback_data="dev_admins_list"), types.InlineKeyboardButton("🔐 الحقوق", callback_data="dev_pick_admin"))
-    m.add(types.InlineKeyboardButton("↩️ الرئيسية", callback_data="dev_main"))
-    return m
-
-
-def show_admins(bot, call):
-    rows=list_sudos(); text="👨‍💻 <b>المشرفون</b>\n\n"+ ("\n".join(f"• <code>{_uid(x)}</code>" for x in rows) if rows else "لا يوجد مشرفون.")
-    m=types.InlineKeyboardMarkup(row_width=1)
-    for x in rows:
-        uid=_uid(x); m.add(types.InlineKeyboardButton(f"🔐 {uid}", callback_data=f"admin_rights:{uid}"))
-    m.add(types.InlineKeyboardButton("↩️ رجوع", callback_data="dev_admins"))
-    bot.edit_message_text(text,call.message.chat.id,call.message.message_id,reply_markup=m,parse_mode="HTML")
-
-
-def show_pick_admin(bot, call):
-    rows=list_sudos(); m=types.InlineKeyboardMarkup(row_width=1)
-    for x in rows:
-        uid=_uid(x); m.add(types.InlineKeyboardButton(f"👤 {uid}",callback_data=f"admin_rights:{uid}"))
-    m.add(types.InlineKeyboardButton("↩️ رجوع",callback_data="dev_admins"))
-    bot.edit_message_text("🔐 اختر المشرف الذي تريد تعديل حقوقه:",call.message.chat.id,call.message.message_id,reply_markup=m)
-
-
-def begin(bot, call, mode, prompt, back="dev_main"):
-    _pending(call.from_user.id,mode)
-    bot.edit_message_text(prompt,call.message.chat.id,call.message.message_id,reply_markup=_back(back),parse_mode="HTML")
-
-
-SOURCE_LABELS = {
-    "youtube": "▶️ YouTube",
-    "soundcloud": "🟠 SoundCloud",
-    "audius": "🔵 Audius",
-    "jamendo": "🟣 Jamendo",
-    "bandcamp": "🟤 Bandcamp",
-    "audiomack": "🟡 Audiomack",
-    "mixcloud": "🟪 Mixcloud",
-    "internet_archive": "🗄️ Internet Archive",
-    "vimeo": "🔷 Vimeo",
-    "dailymotion": "🔴 Dailymotion",
-}
-
-def playback_markup():
-    m=types.InlineKeyboardMarkup(row_width=1)
-    m.add(types.InlineKeyboardButton("✍️ الكتابة: الاسم : الرابط",callback_data="set_play_credit"))
-    m.add(types.InlineKeyboardButton("🎵 زر الموسيقى: الاسم : الرابط",callback_data="set_play_music"))
-    m.add(types.InlineKeyboardButton("🖼️ صورة لوحة التشغيل",callback_data="set_play_image"))
-    m.add(types.InlineKeyboardButton("🌐 المصادر العشرة",callback_data="show_sources10"))
-    m.add(types.InlineKeyboardButton("↩️ رجوع",callback_data="dev_main")); return m
-
-def sources10_markup():
-    m=types.InlineKeyboardMarkup(row_width=1)
-    for source in SUPPORTED_AUDIO_SOURCES:
-        label=SOURCE_LABELS.get(source, source)
-        m.add(types.InlineKeyboardButton(f"{label}  •  مربوط", callback_data=f"source_info:{source}"))
-    m.add(types.InlineKeyboardButton("↩️ رجوع", callback_data="dev_playback"))
-    return m
-
-
-def start_panel_markup():
-    m=types.InlineKeyboardMarkup(row_width=1)
-    m.add(types.InlineKeyboardButton("📝 نص /start",callback_data="set_start_text"))
-    m.add(types.InlineKeyboardButton("🖼️ صورة /start",callback_data="set_start_image"))
-    m.add(types.InlineKeyboardButton("🔘 الزر الأول: الاسم : الرابط",callback_data="set_start_btn1"))
-    m.add(types.InlineKeyboardButton("🔘 الزر الثاني: الاسم : الرابط",callback_data="set_start_btn2"))
-    m.add(types.InlineKeyboardButton("↩️ رجوع",callback_data="dev_main")); return m
-
-
-def subs_markup():
-    m=types.InlineKeyboardMarkup(row_width=2)
-    m.row(types.InlineKeyboardButton("➕ إضافة",callback_data="sub_add"),types.InlineKeyboardButton("➖ حذف",callback_data="sub_remove"))
-    m.row(types.InlineKeyboardButton("📋 القائمة",callback_data="sub_list"),types.InlineKeyboardButton("🔛 تشغيل/إيقاف",callback_data="sub_toggle"))
-    m.add(types.InlineKeyboardButton("↩️ رجوع",callback_data="dev_main")); return m
-
-
-def broadcast_markup():
-    m=types.InlineKeyboardMarkup(row_width=1)
-    m.add(types.InlineKeyboardButton("👤 للأعضاء",callback_data="bc_users"))
-    m.add(types.InlineKeyboardButton("🌐 للكل",callback_data="bc_all"))
-    m.add(types.InlineKeyboardButton("📢 للقنوات",callback_data="bc_channels"))
-    m.add(types.InlineKeyboardButton("↩️ رجوع",callback_data="dev_main")); return m
-
-
-def _counts():
-    try:
-        u,c,a=counts(); return u,c,a
-    except Exception: return 0,0,len(list_sudos())
-
-
-def statistics_text():
-    u,c,a=_counts(); return f"📊 <b>الإحصائيات</b>\n\n👤 الأعضاء: <code>{u}</code>\n💬 المحادثات: <code>{c}</code>\n👨‍💻 المشرفون: <code>{a}</code>"
-
-
-def _set_pair(bot,message,state,text):
-    # Accept both ``اسم الزر : الرابط`` and ``اسم الزر: الرابط``.
-    # Split only at the first separator so ``https://`` remains intact.
-    if " : " in text:
-        name, url = [x.strip() for x in text.split(" : ", 1)]
-    elif ":" in text:
-        name, url = [x.strip() for x in text.split(":", 1)]
-    else:
-        bot.reply_to(message,"⚠️ الصيغة: اسم الزر : رابط الزر"); return True
-    if not name or not url or not _valid_url(url):
-        bot.reply_to(message,"⚠️ الاسم والرابط مطلوبان والرابط يجب أن يبدأ بـ https:// أو http:// أو tg://"); return True
-    mapping={
-        "set_play_credit":("PLAY_CREDIT_NAME","PLAY_CREDIT_URL"),
-        "set_play_music":("PLAY_MUSIC_BUTTON_NAME","PLAY_MUSIC_BUTTON_URL"),
-        "set_source1":("SOURCE1_NAME","SOURCE1_URL"),
-        "set_source2":("SOURCE2_NAME","SOURCE2_URL"),
-        "set_start_btn1":("CUSTOM_BTN1_NAME","CUSTOM_BTN1_URL"),
-        "set_start_btn2":("CUSTOM_BTN2_NAME","CUSTOM_BTN2_URL"),
-    }
-    nk,uk=mapping[state]; setting_set(nk,name); setting_set(uk,url); _pending(message.from_user.id,None)
-    bot.reply_to(message,"✅ تم الحفظ."); return True
-
-
-def handle_input(bot,message):
-    if not is_developer(message.from_user.id): return False
-    state=get_pending(message.from_user.id)
-    if not state: return False
-    text=(message.text or "").strip()
-    if state in {"waiting_add_admin","waiting_remove_admin"}:
-        try: uid=int(text)
-        except: bot.reply_to(message,"⚠️ أرسل ID رقمي صحيح."); return True
-        if uid==int(DEVELOPER_ID): bot.reply_to(message,"⛔ لا يمكن تعديل المطور الأساسي."); return True
-        if state=="waiting_add_admin":
-            add_sudo(uid,message.from_user.id); bot.reply_to(message,"✅ تمت إضافة المشرف، وكل الحقوق تبدأ مغلقة.")
-        else:
-            remove_sudo(uid); bot.reply_to(message,"✅ تم حذف المشرف وحقوقه.")
-        _pending(message.from_user.id,None); return True
-    if state=="waiting_sub_add":
-        parts=[x.strip() for x in text.split("|",2)]
-        if len(parts)!=3: bot.reply_to(message,"⚠️ الصيغة: اسم القناة | المعرف | الرابط"); return True
-        add_subscription(parts[0],parts[1],parts[2],True); bot.reply_to(message,"✅ تمت إضافة الاشتراك."); _pending(message.from_user.id,None); return True
-    if state=="waiting_sub_remove":
-        delete_subscription(text); bot.reply_to(message,"✅ تم الحذف إن وجد."); _pending(message.from_user.id,None); return True
-    if state=="set_start_text":
-        if not text: bot.reply_to(message,"⚠️ أرسل نصًا."); return True
-        setting_set("START_TEXT",text); bot.reply_to(message,"✅ تم تحديث النص."); _pending(message.from_user.id,None); return True
-    if state in {"set_play_credit","set_play_music","set_source1","set_source2","set_start_btn1","set_start_btn2"}:
-        return _set_pair(bot,message,state,text)
-    if state in {"set_start_image","set_play_image"}:
-        if message.photo:
-            key="START_IMAGE" if state=="set_start_image" else "PLAY_IMAGE"; setting_set(key+"_FILE_ID",message.photo[-1].file_id); setting_set(key+"_TYPE","photo")
-        elif message.animation:
-            key="START_IMAGE" if state=="set_start_image" else "PLAY_IMAGE"; setting_set(key+"_FILE_ID",message.animation.file_id); setting_set(key+"_TYPE","animation")
-        else: bot.reply_to(message,"⚠️ أرسل صورة أو GIF."); return True
-        bot.reply_to(message,"✅ تم تحديث الصورة."); _pending(message.from_user.id,None); return True
-    return False
-
-
-def handle_callback(bot,call):
+def handle_callback(bot, call):
+    """Return True when this developer-panel callback was consumed."""
     if not is_developer(call.from_user.id):
-        if (call.data or "").startswith(("dev_","admin_","perm_","bc_","sub_","set_")):
-            bot.answer_callback_query(call.id,"⛔ هذه اللوحة للمطور فقط.",show_alert=True); return True
+        if (call.data or "").startswith(("dev_", "admin_", "bc_", "toggle_perm:", "fs_", "set_fs_", "back_to_main", "close_menu")):
+            bot.answer_callback_query(call.id, "⛔ هذه اللوحة خاصة بالمطور.", show_alert=True)
+            return True
         return False
-    d=call.data or ""
-    bot.answer_callback_query(call.id)
-    if d=="dev_main":
-        _pending(call.from_user.id,None); bot.edit_message_text("⚡ <b>لوحة المطور</b>",call.message.chat.id,call.message.message_id,reply_markup=main_markup(),parse_mode="HTML"); return True
-    if d=="dev_close":
-        _pending(call.from_user.id,None)
-        try: bot.delete_message(call.message.chat.id,call.message.message_id)
-        except: pass
+
+    data = call.data or ""
+
+    if data == "dev_stats":
+        bot.answer_callback_query(call.id); show_statistics(bot, call); return True
+    if data == "dev_broadcast_menu":
+        bot.answer_callback_query(call.id); show_broadcast_menu(bot, call); return True
+    if data in {"bc_all", "bc_users", "bc_channels"}:
+        bot.answer_callback_query(call.id); begin_broadcast(bot, call, data[3:]); return True
+    if data == "dev_admins_menu":
+        bot.answer_callback_query(call.id); show_admins_menu(bot, call); return True
+    if data == "admin_list":
+        bot.answer_callback_query(call.id); show_admin_list(bot, call); return True
+    if data == "admin_add":
+        bot.answer_callback_query(call.id); begin_add_admin(bot, call); return True
+    if data == "admin_remove":
+        bot.answer_callback_query(call.id); begin_remove_admin(bot, call); return True
+    if data.startswith("admin_perms:"):
+        bot.answer_callback_query(call.id)
+        show_permissions(bot, call, int(data.split(":", 1)[1]))
         return True
-    if d=="dev_stats":
-        m=_back(); m.add(types.InlineKeyboardButton("🔄 تحديث",callback_data="dev_stats")); bot.edit_message_text(statistics_text(),call.message.chat.id,call.message.message_id,reply_markup=m,parse_mode="HTML"); return True
-    if d=="dev_broadcast": bot.edit_message_text("📣 <b>الإذاعة</b>",call.message.chat.id,call.message.message_id,reply_markup=broadcast_markup(),parse_mode="HTML"); return True
-    if d.startswith("bc_"):
-        _pending(call.from_user.id,"broadcast_"+d[3:]); bot.edit_message_text("✍️ أرسل الآن المحتوى المطلوب إرساله.",call.message.chat.id,call.message.message_id,reply_markup=_back("dev_broadcast")); return True
-    if d=="dev_admins": bot.edit_message_text("👨‍💻 <b>إدارة المشرفين</b>",call.message.chat.id,call.message.message_id,reply_markup=_admins_menu_impl(),parse_mode="HTML"); return True
-    if d=="dev_admins_list": show_admins(bot,call); return True
-    if d=="dev_pick_admin": show_pick_admin(bot,call); return True
-    if d=="admin_add": begin(bot,call,"waiting_add_admin","🆔 أرسل Telegram ID للمشرف الجديد:","dev_admins"); return True
-    if d=="admin_remove": begin(bot,call,"waiting_remove_admin","🆔 أرسل Telegram ID للمشرف المراد حذفه:","dev_admins"); return True
-    if d.startswith("admin_rights:"):
-        uid=int(d.split(":",1)[1]); show_rights(bot,call,uid); return True
-    if d.startswith("perm_group:"):
-        _,uid,group=d.split(":",2); bot.edit_message_text(f"🔐 <b>{_group_label(group)}</b>\nالمشرف: <code>{uid}</code>",call.message.chat.id,call.message.message_id,reply_markup=group_markup(int(uid),group),parse_mode="HTML"); return True
-    if d.startswith("perm_toggle:"):
-        _,uid,key=d.split(":",2); uid=int(uid); state=get_permission_state(uid,int(DEVELOPER_ID)); set_permission(uid,key,not state.get(key,False)); group=key.split(".",1)[0]; bot.edit_message_reply_markup(call.message.chat.id,call.message.message_id,reply_markup=group_markup(uid,group)); return True
-    if d.startswith("perm_all:"):
-        _,uid,val=d.split(":",2); set_all_permissions(int(uid),val=="1"); show_rights(bot,call,int(uid)); return True
-    if d.startswith("perm_group_all:"):
-        _,uid,group,val=d.split(":",3); uid=int(uid); enabled=val=="1"
-        for key in PERMISSION_GROUPS[group]: set_permission(uid,f"{group}.{key}",enabled)
-        bot.edit_message_reply_markup(call.message.chat.id,call.message.message_id,reply_markup=group_markup(uid,group)); return True
-    if d=="dev_rights": show_pick_admin(bot,call); return True
-    if d=="dev_subs": bot.edit_message_text("🔒 <b>الاشتراك الإجباري</b>",call.message.chat.id,call.message.message_id,reply_markup=subs_markup(),parse_mode="HTML"); return True
-    if d=="sub_add": begin(bot,call,"waiting_sub_add","➕ أرسل: اسم القناة | المعرف | الرابط","dev_subs"); return True
-    if d=="sub_remove": begin(bot,call,"waiting_sub_remove","➖ أرسل معرف القناة للحذف","dev_subs"); return True
-    if d=="sub_toggle":
-        setting_set("SUBS_ENABLED","OFF" if setting_get("SUBS_ENABLED")=="ON" else "ON"); bot.edit_message_text("🔒 <b>الاشتراك الإجباري</b>",call.message.chat.id,call.message.message_id,reply_markup=subs_markup(),parse_mode="HTML"); return True
-    if d=="sub_list":
-        rows=subscriptions(); text="📋 <b>القنوات</b>\n\n"+("\n".join(f"• {x[1]} — {x[2]}" for x in rows) if rows else "لا توجد قنوات."); bot.edit_message_text(text,call.message.chat.id,call.message.message_id,reply_markup=subs_markup(),parse_mode="HTML"); return True
-    if d=="dev_playback":
-        bot.edit_message_text("🎵 <b>لوحة التشغيل</b>\n\nالاسم والرابط للأزرار المخصصة يدخلان معًا بالصيغة: <code>اسم الزر : رابط الزر</code>",call.message.chat.id,call.message.message_id,reply_markup=playback_markup(),parse_mode="HTML"); return True
-    if d=="show_sources10":
-        bot.edit_message_text("🌐 <b>مصادر التشغيل العشرة</b>\n\nهذه هي مصادر المحرك الفعلية، وليست أزرار روابط مخصصة.\nالمصادر الحالية مرتبطة داخل نظام التحميل والـfallback.",call.message.chat.id,call.message.message_id,reply_markup=sources10_markup(),parse_mode="HTML"); return True
-    if d.startswith("source_info:"):
-        source=d.split(":",1)[1]
-        label=SOURCE_LABELS.get(source, source)
-        bot.answer_callback_query(call.id, f"{label} — المصدر مرتبط بالمحرك.", show_alert=True)
+    if data.startswith("toggle_perm:"):
+        _, uid, key = data.split(":", 2)
+        toggle_permission(bot, call, int(uid), key)
         return True
-    if d=="dev_start_panel": bot.edit_message_text("👤 <b>لوحة /start</b>\n\nالأسماء والروابط تُدخل معًا.",call.message.chat.id,call.message.message_id,reply_markup=start_panel_markup(),parse_mode="HTML"); return True
-    prompts={
-        "set_play_credit":"✍️ أرسل: اسم الكتابة : رابط الكتابة",
-        "set_play_music":"🎵 أرسل: اسم الزر : رابط الزر",
-        "set_source1":"1️⃣ أرسل: اسم المصدر : رابط المصدر",
-        "set_source2":"2️⃣ أرسل: اسم المصدر : رابط المصدر",
-        "set_start_btn1":"🔘 أرسل: اسم الزر : رابط الزر",
-        "set_start_btn2":"🔘 أرسل: اسم الزر : رابط الزر",
-        "set_start_text":"📝 أرسل نص /start الجديد",
-        "set_start_image":"🖼️ أرسل صورة أو GIF /start",
-        "set_play_image":"🖼️ أرسل صورة أو GIF لوحة التشغيل",
-    }
-    if d in prompts:
-        begin(bot,call,d,prompts[d],"dev_playback" if d.startswith("set_play_") or d.startswith("set_source") else "dev_start_panel"); return True
+    if data == "dev_forced_sub":
+        bot.answer_callback_query(call.id); show_forced_sub(bot, call); return True
+    if data == "set_fs_channel":
+        bot.answer_callback_query(call.id); begin_set_forced_channel(bot, call); return True
+    if data.startswith("fs_remove:"):
+        target = data.split(":", 1)[1]
+        try:
+            delete_subscription(target)
+            bot.answer_callback_query(call.id, "✅ تم حذف القناة.")
+            show_forced_sub(bot, call)
+        except Exception as exc:
+            bot.answer_callback_query(call.id, f"❌ {exc}", show_alert=True)
+        return True
+    if data == "dev_private_rights":
+        bot.answer_callback_query(call.id); show_private_rights(bot, call); return True
+    if data == "back_to_main":
+        bot.answer_callback_query(call.id); _back_to_main(bot, call); return True
+    if data == "close_menu":
+        pending_input_set(call.from_user.id, None)
+        bot.answer_callback_query(call.id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        return True
+
     return False
 
-# Legacy names imported by admin_panel.py and older integrations.
-PERMISSION_LABELS = {k: v for k, v in PERMISSIONS.items()}
 
-def admin_text() -> str:
-    return "🛠️ لوحة الإدارة\n\nاختر القسم المطلوب:"
+def handle_input(bot, message):
+    """Handle non-broadcast text input belonging to the developer panel."""
+    if not is_developer(message.from_user.id):
+        return False
 
-def developer_markup():
-    k=types.InlineKeyboardMarkup(row_width=2)
-    k.row(types.InlineKeyboardButton("👨‍💻 المشرفين",callback_data="adm_admins"),types.InlineKeyboardButton("🔐 الصلاحيات",callback_data="adm_permissions"))
-    k.row(types.InlineKeyboardButton("🎛️ التشغيل",callback_data="adm_playback"),types.InlineKeyboardButton("📢 الاشتراك",callback_data="adm_subs"))
-    k.row(types.InlineKeyboardButton("👤 لوحة العضو",callback_data="adm_user_panel"),types.InlineKeyboardButton("📣 الإذاعة",callback_data="adm_broadcast"))
-    k.row(types.InlineKeyboardButton("📊 الإحصائيات",callback_data="adm_stats"),types.InlineKeyboardButton("👥 المستخدمون",callback_data="adm_users"))
-    return k
+    state = get_pending(message.from_user.id)
+    if state == "waiting_add_admin":
+        return add_admin_from_message(bot, message)
+    if state == "waiting_remove_admin":
+        return remove_admin_from_message(bot, message)
+    if state == "waiting_fs_channel":
+        return add_forced_channel_from_message(bot, message)
 
-def admins_menu():
-    k=types.InlineKeyboardMarkup(row_width=2)
-    k.row(types.InlineKeyboardButton("➕ إضافة",callback_data="adm_add"),types.InlineKeyboardButton("➖ حذف",callback_data="adm_remove"))
-    k.row(types.InlineKeyboardButton("📋 القائمة",callback_data="adm_list"),types.InlineKeyboardButton("🔐 الصلاحيات",callback_data="adm_choose"))
-    k.add(types.InlineKeyboardButton("↩️ الرئيسية",callback_data="adm_home"))
-    return k
+    # Playback panel image/GIF input is handled here before the generic
+    # router so a media message cannot be swallowed by another handler.
+    if state == "play_set_image":
+        if getattr(message, "photo", None):
+            setting_set("PLAY_IMAGE_FILE_ID", message.photo[-1].file_id)
+            setting_set("PLAY_IMAGE_TYPE", "photo")
+        elif getattr(message, "animation", None):
+            setting_set("PLAY_IMAGE_FILE_ID", message.animation.file_id)
+            setting_set("PLAY_IMAGE_TYPE", "animation")
+        else:
+            bot.reply_to(message, "❌ أرسل صورة أو GIF فقط.")
+            return True
+        pending_input_set(message.from_user.id, None)
+        bot.reply_to(message, "✅ تم حفظ صورة لوحة التشغيل.")
+        return True
 
-def permissions_select_markup():
-    k=types.InlineKeyboardMarkup(row_width=1)
-    rows=list_sudos()
-    if not rows: k.add(types.InlineKeyboardButton("لا يوجد مشرفون",callback_data="adm_noop"))
-    for x in rows:
-        uid=_uid(x); k.add(types.InlineKeyboardButton(f"👤 {uid}",callback_data=f"perm_user:{uid}"))
-    k.add(types.InlineKeyboardButton("↩️ رجوع",callback_data="adm_admins")); return k
+    # Broadcast is intentionally left for the central bot_handlers broadcast
+    # routine, so media/text forwarding stays in one place.
+    return False
 
-def permission_markup(user_id):
-    state=get_permission_state(int(user_id),int(DEVELOPER_ID)); k=types.InlineKeyboardMarkup(row_width=1)
-    # Legacy screen shows granular permissions in a flat list, so older callbacks
-    # remain usable while the new panel provides the hierarchical view.
-    for key,label in PERMISSIONS.items():
-        icon="🟢" if state.get(key,False) else "🔴"
-        k.add(types.InlineKeyboardButton(f"{icon} {label}",callback_data=f"perm_toggle:{user_id}:{key}"))
-    k.row(types.InlineKeyboardButton("↩️ اختيار مشرف",callback_data="adm_choose"),types.InlineKeyboardButton("🏠 الرئيسية",callback_data="adm_home"))
-    return k
-
-developer_panel_markup=main_markup
-dev_main_panel=open_panel
-dev_callbacks_handler=handle_callback
-handle_admin_inputs=handle_input
 
 def register_developer_panel(bot):
+    """Register /panel only; central callback/input routing uses the functions above."""
     @bot.message_handler(commands=["panel"])
     def _panel(message):
-        open_panel(bot,message)
+        open_panel(bot, message)
 
+
+# Compatibility names for older wiring.
+developer_panel_markup = main_markup
+dev_main_panel = open_panel
+dev_callbacks_handler = handle_callback
+handle_admin_inputs = handle_input
+
+__all__ = [
+    "DEV_IDS", "PERMISSION_LABELS", "main_markup", "developer_panel_markup",
+    "open_panel", "dev_main_panel", "handle_callback",
+    "dev_callbacks_handler", "handle_input", "handle_admin_inputs",
+    "register_developer_panel", "statistics_text", "admins_text",
+]
