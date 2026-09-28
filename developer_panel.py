@@ -84,6 +84,36 @@ def main_markup():
     return m
 
 
+def developer_markup():
+    """Compatibility wrapper used by bot_handlers/admin_panel."""
+    return main_markup()
+
+
+def admin_text() -> str:
+    """Compatibility wrapper for the main developer panel text."""
+    return MAIN_TEXT
+
+
+def admins_menu():
+    """Compatibility wrapper for the admins section keyboard."""
+    return admins_markup()
+
+
+def permissions_select_markup():
+    """Keyboard for selecting an admin whose permissions should be edited."""
+    rows = []
+    for item in list_sudos():
+        uid = _admin_id(item)
+        rows.append([types.InlineKeyboardButton(f"👤 {uid}", callback_data=f"admin_perms:{uid}")])
+    rows.append([types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main")])
+    return types.InlineKeyboardMarkup(rows)
+
+
+def permission_markup(user_id: int):
+    """Compatibility wrapper for the existing permission keyboard."""
+    return permissions_markup(user_id)
+
+
 def back_markup(target="back_to_main"):
     return types.InlineKeyboardMarkup(
         [[types.InlineKeyboardButton("🔙 رجوع", callback_data=target)]]
@@ -242,7 +272,7 @@ def begin_remove_admin(bot, call):
 
 
 def add_admin_from_message(bot, message):
-    if get_pending(message.from_user.id) != "waiting_add_admin":
+    if pending_input_get(message.from_user.id) != "waiting_add_admin":
         return False
 
     try:
@@ -281,7 +311,7 @@ def add_admin_from_message(bot, message):
 
 
 def remove_admin_from_message(bot, message):
-    if get_pending(message.from_user.id) != "waiting_remove_admin":
+    if pending_input_get(message.from_user.id) != "waiting_remove_admin":
         return False
 
     try:
@@ -423,7 +453,7 @@ def begin_set_forced_channel(bot, call):
 
 
 def add_forced_channel_from_message(bot, message):
-    if get_pending(message.from_user.id) != "waiting_fs_channel":
+    if pending_input_get(message.from_user.id) != "waiting_fs_channel":
         return False
 
     text = (message.text or "").strip()
@@ -658,6 +688,18 @@ developer_panel_markup = main_markup
 dev_main_panel = open_panel
 dev_callbacks_handler = handle_callback
 handle_admin_inputs = handle_input
+# Keep one canonical playback-panel builder so old imports cannot drift.
+playback_markup = playback_settings_markup
+
+__all__ = [
+    "DEV_IDS", "PERMISSION_LABELS", "MAIN_TEXT",
+    "main_markup", "developer_markup", "developer_panel_markup",
+    "open_panel", "dev_main_panel", "admin_text", "admins_menu",
+    "permissions_select_markup", "permission_markup",
+    "handle_callback", "dev_callbacks_handler",
+    "handle_input", "handle_admin_inputs",
+    "playback_settings_markup", "playback_markup", "show_playback_settings",
+]
 
 __all__ = [
     "DEV_IDS", "PERMISSION_LABELS", "main_markup", "developer_panel_markup",
