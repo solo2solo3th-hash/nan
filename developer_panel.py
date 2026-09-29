@@ -560,9 +560,12 @@ def show_private_rights(bot, call):
 
 def playback_settings_markup():
     m = types.InlineKeyboardMarkup(row_width=1)
-    m.add(types.InlineKeyboardButton("✍️ النص داخل الأغنية: الاسم + الرابط", callback_data="play_credit_pair"))
+    m.add(types.InlineKeyboardButton("✍️ الكتابة: الاسم + الرابط", callback_data="play_credit_pair"))
     m.add(types.InlineKeyboardButton("🎵 زر الموسيقى: الاسم + الرابط", callback_data="play_music_pair"))
+    m.add(types.InlineKeyboardButton("🔘 الزر الأول: الاسم + الرابط", callback_data="play_custom_btn1"))
+    m.add(types.InlineKeyboardButton("🔘 الزر الثاني: الاسم + الرابط", callback_data="play_custom_btn2"))
     m.add(types.InlineKeyboardButton("🖼️ صورة لوحة التشغيل", callback_data="play_set_image"))
+    m.add(types.InlineKeyboardButton("🎨 ألوان/شكل اللوحة", callback_data="play_colors_info"))
     m.add(types.InlineKeyboardButton("↩️ رجوع", callback_data="back_to_main"))
     return m
 
@@ -593,13 +596,21 @@ def show_playback_settings(bot, call):
     credit_url = setting_get("PLAY_CREDIT_URL") or "غير محدد"
     music_name = setting_get("PLAY_MUSIC_BUTTON_NAME") or "غير محدد"
     music_url = setting_get("PLAY_MUSIC_BUTTON_URL") or "غير محدد"
+    btn1_name = setting_get("CUSTOM_BTN1_NAME") or "غير محدد"
+    btn1_url = setting_get("CUSTOM_BTN1_URL") or "غير محدد"
+    btn2_name = setting_get("CUSTOM_BTN2_NAME") or "غير محدد"
+    btn2_url = setting_get("CUSTOM_BTN2_URL") or "غير محدد"
     image_type = setting_get("PLAY_IMAGE_TYPE") or "photo"
     bot.edit_message_text(
         "🎛️ <b>لوحة التشغيل</b>\n\n"
-        f"✍️ النص داخل الأغنية: <code>{credit_name}</code>\n"
+        f"✍️ الكتابة: <code>{credit_name}</code>\n"
         f"🔗 الرابط: <code>{credit_url}</code>\n"
         f"🎵 زر الموسيقى: <code>{music_name}</code>\n"
         f"🔗 الرابط: <code>{music_url}</code>\n"
+        f"🔘 الزر الأول: <code>{btn1_name}</code>\n"
+        f"🔗 الرابط: <code>{btn1_url}</code>\n"
+        f"🔘 الزر الثاني: <code>{btn2_name}</code>\n"
+        f"🔗 الرابط: <code>{btn2_url}</code>\n"
         f"🖼️ الصورة: <code>{image_type}</code>",
         call.message.chat.id, call.message.message_id,
         reply_markup=playback_settings_markup(), parse_mode="HTML"
@@ -614,6 +625,9 @@ def begin_playback_input(bot, call, mode, prompt):
     )
 
 def open_panel(bot, message):
+    # The developer panel is a private-chat surface only.
+    if getattr(getattr(message, "chat", None), "type", None) != "private":
+        return False
     if not is_developer(message.from_user.id):
         return False
     bot.send_message(
@@ -633,6 +647,11 @@ def _back_to_main(bot, call):
 
 def handle_callback(bot, call):
     """Return True when this developer-panel callback was consumed."""
+    # Never process developer-panel callbacks from group/channel messages.
+    # This keeps private-panel controls completely out of chat surfaces.
+    if getattr(getattr(call, "message", None), "chat", None) is not None:
+        if getattr(call.message.chat, "type", None) != "private":
+            return False
     if not is_developer(call.from_user.id):
         if (call.data or "").startswith(("dev_", "admin_", "bc_", "toggle_perm:", "fs_", "set_fs_", "back_to_main", "close_menu")):
             bot.answer_callback_query(call.id, "⛔ هذه اللوحة خاصة بالمطور.", show_alert=True)
@@ -697,11 +716,30 @@ def handle_callback(bot, call):
         return True
     if data == "play_credit_pair":
         bot.answer_callback_query(call.id)
-        begin_playback_input(bot, call, "play_credit_pair", "✍️ أرسل النص الذي يظهر داخل بطاقة الأغنية بالصيغة: <code>الاسم : الرابط</code>")
+        begin_playback_input(bot, call, "play_credit_pair", "✍️ أرسل بالصيغة: <code>اسم الزر : الرابط</code>")
         return True
     if data == "play_music_pair":
         bot.answer_callback_query(call.id)
         begin_playback_input(bot, call, "play_music_pair", "🎵 أرسل بالصيغة: <code>اسم الزر : الرابط</code>")
+        return True
+    if data == "play_custom_btn1":
+        bot.answer_callback_query(call.id)
+        begin_playback_input(bot, call, "play_custom_btn1", "🔘 أرسل بالصيغة: <code>اسم الزر : الرابط</code>")
+        return True
+    if data == "play_custom_btn2":
+        bot.answer_callback_query(call.id)
+        begin_playback_input(bot, call, "play_custom_btn2", "🔘 أرسل بالصيغة: <code>اسم الزر : الرابط</code>")
+        return True
+    if data == "play_colors_info":
+        bot.answer_callback_query(call.id)
+        bot.edit_message_text(
+            "🎨 <b>ألوان لوحة التشغيل</b>\n\n"
+            "تيليجرام لا يسمح للبوت بتغيير لون خلفية أزرار Inline حسب اللون الذي يختاره المطور. "
+            "لون الزر نفسه يحدده تطبيق تيليجرام والثيم.\n\n"
+            "أكدر أتحكم بالاسم، الإيموجي، ترتيب الأزرار، الصورة، والنص؛ أما لون الخلفية فلا يمكن فرضه من Bot API.",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=back_markup(), parse_mode="HTML"
+        )
         return True
     if data == "play_set_image":
         bot.answer_callback_query(call.id)
@@ -778,6 +816,10 @@ def handle_callback(bot, call):
 
 def handle_input(bot, message):
     """Handle non-broadcast text input belonging to the developer panel."""
+    # Settings entered for the developer panel are accepted from private chat
+    # only, preventing a group/channel message from changing global settings.
+    if getattr(getattr(message, "chat", None), "type", None) != "private":
+        return False
     if not is_developer(message.from_user.id):
         return False
 
@@ -789,7 +831,7 @@ def handle_input(bot, message):
     if state == "waiting_fs_channel":
         return add_forced_channel_from_message(bot, message)
 
-    if state in {"play_credit_pair", "play_music_pair", "chat_cmd_button"}:
+    if state in {"play_credit_pair", "play_music_pair", "play_custom_btn1", "play_custom_btn2", "chat_cmd_button"}:
         text = (message.text or "").strip()
         parts = [part.strip() for part in text.split(":", 1)]
         if len(parts) != 2 or not parts[0] or not parts[1]:
@@ -805,6 +847,12 @@ def handle_input(bot, message):
         elif state == "play_music_pair":
             setting_set("PLAY_MUSIC_BUTTON_NAME", name)
             setting_set("PLAY_MUSIC_BUTTON_URL", url)
+        elif state == "play_custom_btn1":
+            setting_set("CUSTOM_BTN1_NAME", name)
+            setting_set("CUSTOM_BTN1_URL", url)
+        elif state == "play_custom_btn2":
+            setting_set("CUSTOM_BTN2_NAME", name)
+            setting_set("CUSTOM_BTN2_URL", url)
         else:
             setting_set("CHAT_COMMANDS_BUTTON_NAME", name)
             setting_set("CHAT_COMMANDS_BUTTON_URL", url)
