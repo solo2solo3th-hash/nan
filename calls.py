@@ -19,7 +19,6 @@ from pyrogram import Client
 # PyrogramMod provides the Pyrogram-compatible ``pyrogram`` module and
 # the exception names expected by this PyTgCalls release.
 from pytgcalls import PyTgCalls
-from pytgcalls.types import MediaStream
 
 from config import API_HASH, API_ID, CALLS_READY_TIMEOUT, SESSION_STRING
 
@@ -231,20 +230,6 @@ class VoiceCallRunner:
 
     def play(self, chat_id: int, stream: Any) -> Any:
         return self.call("play", int(chat_id), stream)
-
-    def seek(self, chat_id: int, stream: Any, seconds: int) -> Any:
-        """Restart the current media stream from an exact offset without leaving the call.
-
-        PyTgCalls applies the FFmpeg seek before the input is decoded. The
-        existing MTProto/PyTgCalls worker thread is reused, so no new assistant
-        session or event loop is created.
-        """
-        offset = max(0, int(seconds))
-        media = MediaStream(
-            stream,
-            ffmpeg_parameters=f"--audio --start -ss {offset}",
-        )
-        return self.call("play", int(chat_id), media)
 
     def pause(self, chat_id: int) -> Any:
         return self.call("pause", int(chat_id))
