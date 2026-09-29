@@ -64,30 +64,37 @@ def user_can_play(message, permission: str = "playback") -> bool:
 
 
 def playback_controls():
-    """Build the playback keyboard, including the configurable link and + button."""
+    """Build the exact playback keyboard requested by the owner."""
     keyboard = types.InlineKeyboardMarkup(row_width=3)
+
+    # Row 1: تخطي | إنهاء | إيقاف
     keyboard.row(
-        types.InlineKeyboardButton("⏸️", callback_data="music_pause"),
-        types.InlineKeyboardButton("▶️", callback_data="music_resume"),
-        types.InlineKeyboardButton("⏭️", callback_data="music_skip"),
-    )
-    keyboard.row(
-        types.InlineKeyboardButton("⏹️", callback_data="music_stop"),
-        types.InlineKeyboardButton("📋 القائمة", callback_data="music_queue"),
-        types.InlineKeyboardButton("➕", callback_data="music_add"),
+        types.InlineKeyboardButton("⏭️ تخطي", callback_data="music_skip"),
+        types.InlineKeyboardButton("⏹️ إنهاء", callback_data="music_stop"),
+        types.InlineKeyboardButton("⏸️ إيقاف", callback_data="music_pause"),
     )
 
-    # Custom URL button #1
+    # Row 2: -10s | تشغيل | +10s
+    keyboard.row(
+        types.InlineKeyboardButton("-10s", callback_data="music_rewind_10"),
+        types.InlineKeyboardButton("▶️", callback_data="music_resume"),
+        types.InlineKeyboardButton("+10s", callback_data="music_forward_10"),
+    )
+
+    # Row 3: custom URL button #1
     btn1_name = (setting_get("CUSTOM_BTN1_NAME") or "").strip()
     btn1_url = (setting_get("CUSTOM_BTN1_URL") or "").strip()
     if btn1_name and btn1_url:
         keyboard.row(types.InlineKeyboardButton(btn1_name[:64], url=btn1_url))
 
-    # Custom URL button #2 (directly under button #1)
+    # Row 4: custom URL button #2
     btn2_name = (setting_get("CUSTOM_BTN2_NAME") or "").strip()
     btn2_url = (setting_get("CUSTOM_BTN2_URL") or "").strip()
     if btn2_name and btn2_url:
         keyboard.row(types.InlineKeyboardButton(btn2_name[:64], url=btn2_url))
+
+    # Bottom row: same requested symbol, used to close the playback panel.
+    keyboard.row(types.InlineKeyboardButton("🔝", callback_data="music_close"))
     return keyboard
 
 
@@ -96,14 +103,10 @@ def _playback_text(track: Track | None) -> str:
         return "⏹️ انتهت قائمة التشغيل."
 
     title = escape(str(track.title))
-    text = f"🎵 الآن: {title}\n⏱️ {duration_text(track.duration)}"
-    credit_name = (setting_get("PLAY_CREDIT_NAME") or "").strip()
-    credit_url = (setting_get("PLAY_CREDIT_URL") or "").strip()
-    if credit_name and credit_url:
-        safe_name = escape(credit_name)
-        safe_url = escape(credit_url, quote=True)
-        text += f'\n\n✍️ <a href="{safe_url}">{safe_name}</a>'
-    return text
+    return (
+        f"حبيب ياسر شغنالك: <b>{title}</b>\n"
+        f"مدة التشغيل: <b>{duration_text(track.duration)}</b>"
+    )
 
 
 def _send_now(bot, chat_id: int, track: Track | None) -> None:
@@ -462,25 +465,27 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             return True
 
     def _send_command_help(message) -> bool:
-        text = (
-            "🎵 <b>أوامر الشات</b>\n\n"
-            "▶️ <b>شغل اسم الأغنية</b> — يبحث ويشغل بالاتصال\n"
-            "▶️ <b>تشغيل اسم الأغنية</b> — نفس الشيء\n"
-            "↩️ <b>رد على MP3 واكتب شغل</b> — يشغل الملف المردود عليه\n"
-            "⏭️ <b>تخطي</b> — الأغنية التالية\n"
-            "⏹️ <b>ايقاف</b> / <b>وقف</b> — إيقاف التشغيل\n"
-            "⏸️ <b>مؤقت</b> / <b>إيقاف مؤقت</b> — إيقاف مؤقت\n"
-            "▶️ <b>استمرار</b> / <b>كمل</b> — استئناف\n"
-            "📋 <b>قائمة</b> / <b>الأغاني</b> — عرض القائمة\n"
-            "🗑️ <b>مسح</b> / <b>مسح القائمة</b> — مسح القائمة وإيقاف التشغيل\n"
-            "📥 <b>يوت اسم الأغنية</b> / <b>نزل</b> / <b>تنزيل</b> — تنزيل وإرسال MP3\n"
-            "👋 <b>خروج</b> / <b>فك</b> — الخروج من الاتصال\n"
-            "🔌 <b>اتصال</b> — الاتصال يُستخدم تلقائياً عند تشغيل أغنية\n"
-        )
+        """Show only the developer-configured chat-commands button.
+
+        The actual music commands continue to work normally; this command is
+        only the public help surface and no longer dumps the full command list.
+        """
+        from database import setting_get
+
+        name = (setting_get("CHAT_COMMANDS_BUTTON_NAME") or "").strip()
+        url = (setting_get("CHAT_COMMANDS_BUTTON_URL") or "").strip()
+
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        if name and url:
+            markup.add(types.InlineKeyboardButton(name, url=url))
+            text = "💬 <b>أوامر الشات</b>"
+        else:
+            text = "💬 <b>أوامر الشات</b>\n\nلم يتم تعيين زر الأوامر من لوحة المطور بعد."
+
         bot.reply_to(
             message,
             text,
-            reply_markup=chat_commands_markup(),
+            reply_markup=markup,
             parse_mode="HTML",
         )
         return True
