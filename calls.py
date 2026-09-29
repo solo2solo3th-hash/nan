@@ -15,9 +15,18 @@ from typing import Any, Awaitable, Callable
 
 from pyrogram import Client
 
-# PyTgCalls 2.3.3 is paired with PyrogramMod 2.4.1 in requirements.txt.
-# PyrogramMod provides the Pyrogram-compatible ``pyrogram`` module and
-# the exception names expected by this PyTgCalls release.
+# PyTgCalls 2.3.3 has historically imported the ``Groupcall*`` exception
+# spelling. Some Pyrogram-compatible builds expose the same exceptions as
+# ``GroupCall*``. Add the historical aliases before importing PyTgCalls so
+# startup does not fail just because the compatibility package uses the newer
+# capitalization. This is harmless when the old names already exist.
+import pyrogram.errors as pyrogram_errors
+
+if not hasattr(pyrogram_errors, "GroupcallForbidden") and hasattr(pyrogram_errors, "GroupCallForbidden"):
+    pyrogram_errors.GroupcallForbidden = pyrogram_errors.GroupCallForbidden
+if not hasattr(pyrogram_errors, "GroupcallInvalid") and hasattr(pyrogram_errors, "GroupCallInvalid"):
+    pyrogram_errors.GroupcallInvalid = pyrogram_errors.GroupCallInvalid
+
 from pytgcalls import PyTgCalls
 
 from config import API_HASH, API_ID, CALLS_READY_TIMEOUT, SESSION_STRING
@@ -227,6 +236,58 @@ class VoiceCallRunner:
 
     async def aplay(self, chat_id: int, stream: Any) -> Any:
         return await self.acall("play", int(chat_id), stream)
+
+    async def aassistant_status(self, chat_id: int) -> str | None:
+        """Return the assistant membership status without blocking normal playback.
+
+        ``left`` is intentionally not treated as a fatal state: the assistant
+        can still be used for the voice-chat flow when Telegram/PyTgCalls can
+        enter the call. Only an explicit banned/kicked status blocks playback.
+        """
+        assistant = self.assistant
+        if assistant is None:
+            return None
+        try:
+            me = await assistant.get_me()
+            member = await assistant.get_chat_member(int(chat_id), me.id)
+            return str(getattr(member, "status", "")).lower() or None
+        except Exception:
+            return None
+
+    def assistant_status(self, chat_id: int) -> str | None:
+        """Thread-safe membership-status lookup for the assistant account."""
+        self._ensure_ready()
+        loop = self.loop
+        if loop is None or loop.is_closed() or not loop.is_running():
+            return None
+        future = asyncio.run_coroutine_threadsafe(self.aassistant_status(int(chat_id)), loop)
+        try:
+            return future.result(timeout=20)
+        except Exception:
+            future.cancel()
+            return None
+
+    def assistant_blocked(self, chat_id: int) -> bool:
+        """Return True only when Telegram explicitly reports the assistant banned."""
+        return self.assistant_status(chat_id) in {"banned", "kicked"}
+
+    async def aassistant_present(self, chat_id: int) -> bool:
+        """Backward-compatible presence check for callers that need it."""
+        status = await self.aassistant_status(chat_id)
+        return status not in {None, "left", "kicked", "banned"}
+
+    def assistant_present(self, chat_id: int) -> bool:
+        """Thread-safe presence check for the assistant account."""
+        self._ensure_ready()
+        loop = self.loop
+        if loop is None or loop.is_closed() or not loop.is_running():
+            return False
+        future = asyncio.run_coroutine_threadsafe(self.aassistant_present(int(chat_id)), loop)
+        try:
+            return bool(future.result(timeout=20))
+        except Exception:
+            future.cancel()
+            return False
 
     def play(self, chat_id: int, stream: Any) -> Any:
         return self.call("play", int(chat_id), stream)
