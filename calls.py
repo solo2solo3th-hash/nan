@@ -19,6 +19,7 @@ from pyrogram import Client
 # PyrogramMod provides the Pyrogram-compatible ``pyrogram`` module and
 # the exception names expected by this PyTgCalls release.
 from pytgcalls import PyTgCalls
+from pytgcalls.types import MediaStream
 
 from config import API_HASH, API_ID, CALLS_READY_TIMEOUT, SESSION_STRING
 
@@ -36,31 +37,51 @@ class VoiceCallRunner:
         self._stop = threading.Event()
         self._stream_end_handler: Callable[[int], Awaitable[None] | None] | None = None
         self._state_lock = threading.RLock()
+        self._start_lock = threading.Lock()
 
     def set_stream_end_handler(self, handler: Callable[[int], Awaitable[None] | None]) -> None:
         self._stream_end_handler = handler
 
+    def _runtime_alive(self) -> bool:
+        loop = self.loop
+        thread = self.thread
+        return bool(loop is not None and not loop.is_closed() and loop.is_running() and self.calls is not None and self.ready.is_set() and thread is not None and thread.is_alive())
+
     def start(self) -> None:
-        # A previous runtime may have exited and closed its event loop.
-        # Never reuse that stale loop; start a fresh runtime instead.
-        if self.thread and self.thread.is_alive():
-            if not self.ready.wait(CALLS_READY_TIMEOUT):
-                raise RuntimeError("Voice runtime is already starting but did not become ready")
-            self._raise_if_failed()
-            return
-        with self._state_lock:
-            self.error = None
-            self.ready.clear()
-            self._stop.clear()
-            self.loop = None
-            self.calls = None
-            self.assistant = None
-            self.thread = threading.Thread(target=self._worker, name="mtproto-calls", daemon=True)
-            thread = self.thread
-        thread.start()
+        # Never reuse a stale/closed event loop.
+        with self._start_lock:
+            if self._runtime_alive():
+                return
+            if self.thread and self.thread.is_alive():
+                if not self.ready.wait(CALLS_READY_TIMEOUT):
+                    raise RuntimeError("Voice runtime is already starting but did not become ready")
+                self._raise_if_failed()
+                if not self._runtime_alive():
+                    raise RuntimeError("Voice runtime stopped immediately after startup")
+                return
+            with self._state_lock:
+                self.error = None
+                self.ready.clear()
+                self._stop.clear()
+                self.loop = None
+                self.calls = None
+                self.assistant = None
+                self.thread = threading.Thread(target=self._worker, name="mtproto-calls", daemon=True)
+                thread = self.thread
+            thread.start()
         if not self.ready.wait(CALLS_READY_TIMEOUT):
             raise RuntimeError(f"MTProto/PyTgCalls did not become ready within {CALLS_READY_TIMEOUT}s")
         self._raise_if_failed()
+        if not self._runtime_alive():
+            raise RuntimeError("Voice runtime stopped after becoming ready")
+
+    def _ensure_ready(self) -> None:
+        if self._runtime_alive():
+            return
+        self.start()
+        if not self._runtime_alive():
+            self._raise_if_failed()
+            raise RuntimeError("Voice runtime is not ready (event loop is closed or stopped)")
 
     def _raise_if_failed(self) -> None:
         if self.error is not None:
@@ -143,6 +164,7 @@ class VoiceCallRunner:
 
     def call(self, method: str, *args: Any, **kwargs: Any) -> Any:
         """Execute a PyTgCalls method on its owning event-loop thread."""
+        self._ensure_ready()
         loop = self.loop
         calls = self.calls
         thread = self.thread
@@ -209,6 +231,20 @@ class VoiceCallRunner:
 
     def play(self, chat_id: int, stream: Any) -> Any:
         return self.call("play", int(chat_id), stream)
+
+    def seek(self, chat_id: int, stream: Any, seconds: int) -> Any:
+        """Restart the current media stream from an exact offset without leaving the call.
+
+        PyTgCalls applies the FFmpeg seek before the input is decoded. The
+        existing MTProto/PyTgCalls worker thread is reused, so no new assistant
+        session or event loop is created.
+        """
+        offset = max(0, int(seconds))
+        media = MediaStream(
+            stream,
+            ffmpeg_parameters=f"--audio --start -ss {offset}",
+        )
+        return self.call("play", int(chat_id), media)
 
     def pause(self, chat_id: int) -> Any:
         return self.call("pause", int(chat_id))
