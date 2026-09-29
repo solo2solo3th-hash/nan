@@ -2,7 +2,6 @@
 from __future__ import annotations
 import logging
 import uuid
-import time
 from html import escape
 from pathlib import Path
 from urllib.parse import urlparse
@@ -32,31 +31,6 @@ from subscriptions import mandatory_missing
 from utils import alert, duration_text
 
 log = logging.getLogger(__name__)
-
-# Playback position is tracked locally so +/-10s can restart the same file at
-# the requested offset without touching the VoiceCallRunner event loop itself.
-_PLAYBACK_POS: dict[int, float] = {}
-_PLAYBACK_STARTED: dict[int, float] = {}
-_PLAYBACK_PAUSED: dict[int, bool] = {}
-
-def _playback_position(chat_id: int, track: Track | None) -> int:
-    if track is None:
-        return 0
-    base = float(_PLAYBACK_POS.get(chat_id, 0.0))
-    if not _PLAYBACK_PAUSED.get(chat_id, False):
-        base += max(0.0, time.monotonic() - float(_PLAYBACK_STARTED.get(chat_id, time.monotonic())))
-    return max(0, min(int(base), max(0, int(track.duration))))
-
-def _set_playback_position(chat_id: int, seconds: int, paused: bool = False) -> None:
-    _PLAYBACK_POS[chat_id] = max(0, int(seconds))
-    _PLAYBACK_STARTED[chat_id] = time.monotonic()
-    _PLAYBACK_PAUSED[chat_id] = paused
-
-def _clear_playback_position(chat_id: int) -> None:
-    _PLAYBACK_POS.pop(chat_id, None)
-    _PLAYBACK_STARTED.pop(chat_id, None)
-    _PLAYBACK_PAUSED.pop(chat_id, None)
-
 
 
 def admin_can(user_id: int, permission: str | None = None) -> bool:
@@ -90,39 +64,30 @@ def user_can_play(message, permission: str = "playback") -> bool:
 
 
 def playback_controls():
-    """Build the requested playback keyboard without changing the playback engine."""
+    """Build the playback keyboard, including the configurable link and + button."""
     keyboard = types.InlineKeyboardMarkup(row_width=3)
-
-    # Row 1: skip / end / pause
     keyboard.row(
-        types.InlineKeyboardButton("⏭️ تخطي", callback_data="music_skip"),
-        types.InlineKeyboardButton("⏹️ إنهاء", callback_data="music_stop"),
-        types.InlineKeyboardButton("⏸️ إيقاف", callback_data="music_pause"),
-    )
-
-    # Row 2: seek controls are exposed as dedicated callbacks. The current
-    # VoiceCallRunner does not expose a safe seek primitive, so these callbacks
-    # are intentionally handled without touching the voice runtime.
-    keyboard.row(
-        types.InlineKeyboardButton("-10s", callback_data="music_rewind_10"),
+        types.InlineKeyboardButton("⏸️", callback_data="music_pause"),
         types.InlineKeyboardButton("▶️", callback_data="music_resume"),
-        types.InlineKeyboardButton("+10s", callback_data="music_forward_10"),
+        types.InlineKeyboardButton("⏭️", callback_data="music_skip"),
+    )
+    keyboard.row(
+        types.InlineKeyboardButton("⏹️", callback_data="music_stop"),
+        types.InlineKeyboardButton("📋 القائمة", callback_data="music_queue"),
+        types.InlineKeyboardButton("➕", callback_data="music_add"),
     )
 
-    # Row 3: developer-configured button #1 (full width)
+    # Custom URL button #1
     btn1_name = (setting_get("CUSTOM_BTN1_NAME") or "").strip()
     btn1_url = (setting_get("CUSTOM_BTN1_URL") or "").strip()
     if btn1_name and btn1_url:
         keyboard.row(types.InlineKeyboardButton(btn1_name[:64], url=btn1_url))
 
-    # Row 4: developer-configured button #2 (full width)
+    # Custom URL button #2 (directly under button #1)
     btn2_name = (setting_get("CUSTOM_BTN2_NAME") or "").strip()
     btn2_url = (setting_get("CUSTOM_BTN2_URL") or "").strip()
     if btn2_name and btn2_url:
         keyboard.row(types.InlineKeyboardButton(btn2_name[:64], url=btn2_url))
-
-    # Bottom row: close the playback panel message only.
-    keyboard.row(types.InlineKeyboardButton("❌", callback_data="music_close"))
     return keyboard
 
 
@@ -131,10 +96,7 @@ def _playback_text(track: Track | None) -> str:
         return "⏹️ انتهت قائمة التشغيل."
 
     title = escape(str(track.title))
-    text = (
-        f"حبيب ياسر شغنالك: <b>{title}</b>\n"
-        f"مدة التشغيل: <b>{duration_text(track.duration)}</b>"
-    )
+    text = f"🎵 الآن: {title}\n⏱️ {duration_text(track.duration)}"
     credit_name = (setting_get("PLAY_CREDIT_NAME") or "").strip()
     credit_url = (setting_get("PLAY_CREDIT_URL") or "").strip()
     if credit_name and credit_url:
@@ -149,10 +111,6 @@ def _send_now(bot, chat_id: int, track: Track | None) -> None:
     image_type = setting_get("PLAY_IMAGE_TYPE") or "photo"
     text = _playback_text(track)
     markup = None if track is None else playback_controls()
-    if track is None:
-        _clear_playback_position(chat_id)
-    else:
-        _set_playback_position(chat_id, 0, paused=False)
     if image_id and track is not None:
         try:
             kwargs = {"caption": text, "reply_markup": markup, "parse_mode": "HTML"}
@@ -328,10 +286,18 @@ def _handle_pending(bot, message) -> bool:
 def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: MusicPlayer) -> None:
     @bot.message_handler(commands=["start"])
     def start_handler(message):
+        # /start is a private-bot surface. Do not expose the private/member
+        # panel when the command is sent inside a group or channel.
+        if message.chat.type != "private":
+            return
         handle_start(bot, message, bot_username)
 
     @bot.message_handler(commands=["admin", "panel", "dev"])
     def admin_handler(message):
+        # Developer/admin panel is private only. Group/channel messages are
+        # intentionally ignored so the private panel never leaks there.
+        if message.chat.type != "private":
+            return
         save_user(message.from_user); save_chat(message.chat)
         if not admin_can(message.from_user.id):
             bot.reply_to(message, "❌ هذا الأمر مخصص للمطور والمشرفين فقط.")
@@ -710,7 +676,9 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
 
     @bot.message_handler(content_types=["text", "photo", "animation"])
     def message_router(message):
-        if _handle_pending(bot, message): return
+        # Developer-panel input is private only; normal group/channel music
+        # commands continue through the regular chat-command path.
+        if message.chat.type == "private" and _handle_pending(bot, message): return
         save_user(message.from_user); save_chat(message.chat)
         if _text_music_command(message): return
         if message.text and message.text.startswith("/"):
@@ -807,43 +775,10 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                 elif data=="music_stop":
                     try: calls.leave(chat_id)
                     except Exception: pass
-                    player.stop(chat_id); _clear_playback_position(chat_id); bot.send_message(chat_id,"⏹️ تم الإيقاف.")
-                elif data=="music_pause":
-                    current = player.current(chat_id)
-                    calls.pause(chat_id)
-                    if current is not None:
-                        _set_playback_position(chat_id, _playback_position(chat_id, current), paused=True)
-                    bot.send_message(chat_id,"⏸️ تم الإيقاف المؤقت.")
-                elif data=="music_resume":
-                    calls.resume(chat_id)
-                    _set_playback_position(chat_id, _PLAYBACK_POS.get(chat_id, 0), paused=False)
-                    bot.send_message(chat_id,"▶️ تم الاستئناف.")
-                elif data in {"music_rewind_10", "music_forward_10"}:
-                    current = player.current(chat_id)
-                    if current is None:
-                        alert(bot, call, "ℹ️ لا توجد أغنية قيد التشغيل.", True)
-                        return
-                    current_pos = _playback_position(chat_id, current)
-                    delta = -10 if data == "music_rewind_10" else 10
-                    target = max(0, min(current_pos + delta, int(current.duration)))
-                    if target == current_pos and delta > 0:
-                        alert(bot, call, "ℹ️ وصلت لنهاية الأغنية.", False)
-                        return
-                    try:
-                        calls.seek(chat_id, current.path, target)
-                        _set_playback_position(chat_id, target, paused=False)
-                        alert(bot, call, f"⏱️ تم الانتقال إلى {duration_text(target)}")
-                    except Exception:
-                        log.exception("seek failed")
-                        alert(bot, call, "❌ تعذر تغيير موضع التشغيل.", True)
-                    return
+                    player.stop(chat_id); bot.send_message(chat_id,"⏹️ تم الإيقاف.")
+                elif data=="music_pause": calls.pause(chat_id); bot.send_message(chat_id,"⏸️ تم الإيقاف المؤقت.")
+                elif data=="music_resume": calls.resume(chat_id); bot.send_message(chat_id,"▶️ تم الاستئناف.")
                 elif data=="music_queue": _send_queue(bot,player,chat_id)
-                elif data=="music_close":
-                    try:
-                        bot.delete_message(chat_id, call.message.message_id)
-                    except Exception:
-                        pass
-                    return
                 elif data=="music_add":
                     user = call.from_user
                     first_name = escape(getattr(user, "first_name", None) or "عضو")
