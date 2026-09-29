@@ -33,6 +33,128 @@ from utils import alert, duration_text
 log = logging.getLogger(__name__)
 
 
+def _set_bot_commands(bot) -> None:
+    """Register the bot commands shown in Telegram's command menu."""
+    try:
+        bot.set_my_commands([
+            types.BotCommand("start", "رسالة البدء"),
+            types.BotCommand("admin", "لوحة الإدارة"),
+        ])
+    except Exception:
+        # Command-menu setup must never prevent the bot from starting.
+        log.exception("Failed to register bot commands")
+
+
+_BOT_LOGO_FILE_ID = None
+
+def _chat_link(bot, chat) -> str:
+    """Return a stable public/primary link for a group or channel when Telegram exposes one."""
+    username = getattr(chat, "username", None)
+    if username:
+        return f"https://t.me/{username}"
+    try:
+        fresh = bot.get_chat(chat.id)
+        username = getattr(fresh, "username", None)
+        if username:
+            return f"https://t.me/{username}"
+        invite = getattr(fresh, "invite_link", None)
+        if invite:
+            return invite
+    except Exception:
+        log.exception("Could not resolve chat link for %s", getattr(chat, "id", None))
+    return ""
+
+
+def _bot_logo_file_id(bot) -> str | None:
+    """Use the bot profile photo as the developer notification logo, with /start image as fallback."""
+    global _BOT_LOGO_FILE_ID
+    if _BOT_LOGO_FILE_ID:
+        return _BOT_LOGO_FILE_ID
+    try:
+        me = bot.get_me()
+        photos = bot.get_user_profile_photos(me.id, limit=1)
+        if getattr(photos, "photos", None) and photos.photos[0]:
+            _BOT_LOGO_FILE_ID = photos.photos[0][-1].file_id
+            return _BOT_LOGO_FILE_ID
+    except Exception:
+        log.exception("Could not read bot profile photo")
+    fallback = (setting_get("START_IMAGE_FILE_ID") or "").strip()
+    return fallback or None
+
+
+def _notify_developer(bot, text: str) -> None:
+    """Send developer-only event notifications without affecting normal bot flow."""
+    try:
+        logo = _bot_logo_file_id(bot)
+        if logo:
+            bot.send_photo(DEVELOPER_ID, logo, caption=text, parse_mode="HTML")
+        else:
+            bot.send_message(DEVELOPER_ID, text, parse_mode="HTML")
+    except Exception:
+        log.exception("Developer notification failed")
+
+
+def _notify_start(bot, message) -> None:
+    user = getattr(message, "from_user", None)
+    if user is None:
+        return
+    name = escape((getattr(user, "first_name", "") or "").strip() or "بدون اسم")
+    username = getattr(user, "username", None)
+    username_text = f"@{escape(username)}" if username else "بدون معرف"
+    text = (
+        "🆕 <b>عضو استخدم /start</b>\n\n"
+        f"👤 الاسم: <b>{name}</b>\n"
+        f"🔗 المعرف: {username_text}\n"
+        f"🆔 ID: <code>{int(user.id)}</code>"
+    )
+    _notify_developer(bot, text)
+
+
+def _notify_play(bot, message, track: Track, queued: bool = False) -> None:
+    chat = getattr(message, "chat", None)
+    if chat is None or getattr(chat, "type", None) not in {"group", "supergroup", "channel"}:
+        return
+    link = _chat_link(bot, chat)
+    title = escape(str(track.title))
+    chat_title = escape(getattr(chat, "title", None) or "بدون اسم")
+    link_line = f"🔗 <a href=\"{escape(link, quote=True)}\">رابط الكروب/القناة</a>" if link else "🔗 رابط الكروب/القناة: غير متاح"
+    state = "📋 تمت الإضافة للقائمة" if queued else "▶️ بدأ التشغيل"
+    text = (
+        f"🎵 <b>{state}</b>\n\n"
+        f"🎼 الأغنية: <b>{title}</b>\n"
+        f"💬 المحادثة: <b>{chat_title}</b>\n"
+        f"🆔 Chat ID: <code>{int(chat.id)}</code>\n"
+        f"{link_line}"
+    )
+    _notify_developer(bot, text)
+
+
+def _notify_bot_added(bot, update) -> None:
+    chat = getattr(update, "chat", None)
+    if chat is None or getattr(chat, "type", None) not in {"group", "supergroup", "channel"}:
+        return
+    old_status = getattr(getattr(update, "old_chat_member", None), "status", "")
+    new_status = getattr(getattr(update, "new_chat_member", None), "status", "")
+    active = {"member", "administrator"}
+    if new_status not in active or old_status in active:
+        return
+    save_chat(chat)
+    link = _chat_link(bot, chat)
+    title = escape(getattr(chat, "title", None) or "بدون اسم")
+    chat_type = "قناة" if chat.type == "channel" else "كروب"
+    link_line = f"🔗 <a href=\"{escape(link, quote=True)}\">فتح {chat_type}</a>" if link else "🔗 الرابط: غير متاح"
+    actor = getattr(update, "from_user", None)
+    actor_name = escape((getattr(actor, "first_name", "") or "").strip() or "غير معروف") if actor else "غير معروف"
+    text = (
+        f"➕ <b>تمت إضافة البوت إلى {chat_type}</b>\n\n"
+        f"📌 الاسم: <b>{title}</b>\n"
+        f"👤 بواسطة: <b>{actor_name}</b>\n"
+        f"🆔 Chat ID: <code>{int(chat.id)}</code>\n"
+        f"{link_line}"
+    )
+    _notify_developer(bot, text)
+
+
 def admin_can(user_id: int, permission: str | None = None) -> bool:
     if not is_admin(user_id, DEVELOPER_ID):
         return False
@@ -45,6 +167,47 @@ def require_group(bot, message) -> bool:
     if message.chat.type not in {"group", "supergroup"}:
         bot.reply_to(message, "❌ هذا الأمر يجب استخدامه داخل مجموعة.")
         return False
+    return True
+
+
+def _mandatory_subscription_wall(bot, message) -> bool:
+    """Block music playback until the member joins the configured required chats."""
+    if setting_get("SUBS_ENABLED") != "ON":
+        return False
+
+    user = getattr(message, "from_user", None)
+    user_id = getattr(user, "id", None)
+    if user_id is None or int(user_id) == DEVELOPER_ID:
+        return False
+
+    try:
+        missing = mandatory_missing(bot, int(user_id))
+    except Exception:
+        log.exception("Mandatory subscription check failed")
+        # Fail closed while mandatory mode is enabled; otherwise users could
+        # bypass the requirement when Telegram temporarily rejects the check.
+        missing = subscriptions()
+
+    if not missing:
+        return False
+
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+    # The normal setup is one required channel/group. If several are configured,
+    # show the first missing target here and keep the user blocked until all are joined.
+    first = missing[0]
+    title = str(first[1] or "القناة المطلوبة")
+    url = str(first[3] or "").strip()
+    if url:
+        keyboard.add(types.InlineKeyboardButton(f"🟣 {title}", url=url))
+
+    keyboard.add(types.InlineKeyboardButton("✅ تحققت من الاشتراك", callback_data="sub_check"))
+    bot.reply_to(
+        message,
+        "تروحح فدوة لياسر ❤️\n"
+        "اشترك بالتالي واستخدم البوت:\n\n"
+        "بعد الاشتراك اضغط زر التحقق أو أعد إرسال أمر التشغيل.",
+        reply_markup=keyboard,
+    )
     return True
 
 
@@ -63,38 +226,32 @@ def user_can_play(message, permission: str = "playback") -> bool:
     return True
 
 
+def _playback_button_style(key: str) -> str | None:
+    """Return the Telegram semantic button style selected by the developer."""
+    value = (setting_get(f"PLAY_BTN_COLOR_{key.upper()}") or "default").strip().lower()
+    return value if value in {"primary", "success", "danger"} else None
+
+
 def playback_controls():
-    """Build the exact playback keyboard requested by the owner."""
+    """Build the existing playback keyboard without changing its layout."""
     keyboard = types.InlineKeyboardMarkup(row_width=3)
-
-    # Row 1: تخطي | إنهاء | إيقاف
     keyboard.row(
-        types.InlineKeyboardButton("⏭️ تخطي", callback_data="music_skip"),
-        types.InlineKeyboardButton("⏹️ إنهاء", callback_data="music_stop"),
-        types.InlineKeyboardButton("⏸️ إيقاف", callback_data="music_pause"),
+        types.InlineKeyboardButton("⏸️", callback_data="music_pause", style=_playback_button_style("pause")),
+        types.InlineKeyboardButton("▶️", callback_data="music_resume", style=_playback_button_style("resume")),
+        types.InlineKeyboardButton("⏭️", callback_data="music_skip", style=_playback_button_style("skip")),
+    )
+    keyboard.row(
+        types.InlineKeyboardButton("⏹️", callback_data="music_stop", style=_playback_button_style("stop")),
+        types.InlineKeyboardButton("📋 القائمة", callback_data="music_queue", style=_playback_button_style("queue")),
+        types.InlineKeyboardButton("➕", callback_data="music_add", style=_playback_button_style("add")),
     )
 
-    # Row 2: -10s | تشغيل | +10s
-    keyboard.row(
-        types.InlineKeyboardButton("-10s", callback_data="music_rewind_10"),
-        types.InlineKeyboardButton("▶️", callback_data="music_resume"),
-        types.InlineKeyboardButton("+10s", callback_data="music_forward_10"),
-    )
-
-    # Row 3: custom URL button #1
-    btn1_name = (setting_get("CUSTOM_BTN1_NAME") or "").strip()
-    btn1_url = (setting_get("CUSTOM_BTN1_URL") or "").strip()
-    if btn1_name and btn1_url:
-        keyboard.row(types.InlineKeyboardButton(btn1_name[:64], url=btn1_url))
-
-    # Row 4: custom URL button #2
-    btn2_name = (setting_get("CUSTOM_BTN2_NAME") or "").strip()
-    btn2_url = (setting_get("CUSTOM_BTN2_URL") or "").strip()
-    if btn2_name and btn2_url:
-        keyboard.row(types.InlineKeyboardButton(btn2_name[:64], url=btn2_url))
-
-    # Bottom row: same requested symbol, used to close the playback panel.
-    keyboard.row(types.InlineKeyboardButton("🔝", callback_data="music_close"))
+    button_name = (setting_get("PLAY_MUSIC_BUTTON_NAME") or "").strip()
+    button_url = (setting_get("PLAY_MUSIC_BUTTON_URL") or "").strip()
+    if button_name and button_url:
+        keyboard.row(types.InlineKeyboardButton(
+            button_name[:64], url=button_url, style=_playback_button_style("custom")
+        ))
     return keyboard
 
 
@@ -103,10 +260,41 @@ def _playback_text(track: Track | None) -> str:
         return "⏹️ انتهت قائمة التشغيل."
 
     title = escape(str(track.title))
-    return (
-        f"حبيب ياسر شغنالك: <b>{title}</b>\n"
-        f"مدة التشغيل: <b>{duration_text(track.duration)}</b>"
-    )
+    text = f"🎵 الآن: {title}\n⏱️ {duration_text(track.duration)}"
+    credit_name = (setting_get("PLAY_CREDIT_NAME") or "").strip()
+    credit_url = (setting_get("PLAY_CREDIT_URL") or "").strip()
+    if credit_name and credit_url:
+        safe_name = escape(credit_name)
+        safe_url = escape(credit_url, quote=True)
+        text += f'\n\n✍️ <a href="{safe_url}">{safe_name}</a>'
+    return text
+
+
+def _audio_jat_markup():
+    """Build the optional button shown directly under downloaded audio."""
+    button_name = (setting_get("JAT_AUDIO_BUTTON_NAME") or "").strip()
+    button_url = (setting_get("JAT_AUDIO_BUTTON_URL") or "").strip()
+    if not button_name or not button_url:
+        return None
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+    keyboard.add(types.InlineKeyboardButton(button_name[:64], url=button_url))
+    return keyboard
+
+
+def _audio_jat_caption() -> str | None:
+    """Return optional linked text displayed below a downloaded audio file."""
+    name = (setting_get("JAT_AUDIO_CREDIT_NAME") or "").strip()
+    url = (setting_get("JAT_AUDIO_CREDIT_URL") or "").strip()
+    if not name:
+        return None
+    if url:
+        return f'<a href="{escape(url, quote=True)}">{escape(name)}</a>'
+    return escape(name)
+
+
+def _audio_jat_performer() -> str:
+    """Hide the extractor/uploader and use the developer-selected source label."""
+    return (setting_get("JAT_AUDIO_PERFORMER") or "من نينو").strip() or "من نينو"
 
 
 def _send_now(bot, chat_id: int, track: Track | None) -> None:
@@ -153,6 +341,11 @@ async def _stream_end(bot, calls: VoiceCallRunner, player: MusicPlayer, chat_id:
     try:
         track = player.finish_and_take_next(chat_id)
         if track is None:
+            # No queued track remains: leave the voice chat automatically.
+            try:
+                await calls.acall("leave_call", int(chat_id))
+            except Exception:
+                log.exception("Failed to leave voice chat after queue ended in %s", chat_id)
             bot.send_message(chat_id, "⏹️ انتهت قائمة التشغيل.")
             return
         await calls.aplay(chat_id, track.path)
@@ -287,25 +480,42 @@ def _handle_pending(bot, message) -> bool:
 
 
 def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: MusicPlayer) -> None:
+    _set_bot_commands(bot)
+    @bot.my_chat_member_handler()
+    def bot_chat_membership_handler(update):
+        _notify_bot_added(bot, update)
+
     @bot.message_handler(commands=["start"])
     def start_handler(message):
-        # /start is a private-bot surface. Do not expose the private/member
-        # panel when the command is sent inside a group or channel.
-        if message.chat.type != "private":
-            return
         handle_start(bot, message, bot_username)
+        _notify_start(bot, message)
 
     @bot.message_handler(commands=["admin", "panel", "dev"])
     def admin_handler(message):
-        # Developer/admin panel is private only. Group/channel messages are
-        # intentionally ignored so the private panel never leaks there.
-        if message.chat.type != "private":
-            return
         save_user(message.from_user); save_chat(message.chat)
         if not admin_can(message.from_user.id):
             bot.reply_to(message, "❌ هذا الأمر مخصص للمطور والمشرفين فقط.")
             return
         bot.send_message(message.chat.id, admin_text(), reply_markup=developer_markup())
+
+    def _assistant_banned_message(message) -> bool:
+        """Stop playback only when Telegram explicitly says the assistant is banned."""
+        if message.chat.type not in {"group", "supergroup", "channel"}:
+            return False
+        try:
+            if calls.assistant_blocked(message.chat.id):
+                bot.reply_to(
+                    message,
+                    "🚫 روح نينو ❤️\n"
+                    "المساعد محظور من الكروب/القناة، انتوا ضيفوا المساعد حتى أگدر أشغلكم 🎶"
+                )
+                return True
+        except Exception:
+            # Do not block normal playback when Telegram cannot answer the
+            # membership query. PyTgCalls remains the source of truth for the
+            # actual voice-chat join operation.
+            log.exception("assistant ban check failed")
+        return False
 
     @bot.message_handler(commands=["play", "p"])
     def play_handler(message):
@@ -313,6 +523,10 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
         if not require_group(bot, message) or not user_can_play(message):
             if message.chat.type in {"group", "supergroup"} and not user_can_play(message):
                 bot.reply_to(message, "🚫 ليست لديك صلاحية التشغيل.")
+            return
+        if _mandatory_subscription_wall(bot, message):
+            return
+        if _assistant_banned_message(message):
             return
         parts = (message.text or "").split(maxsplit=1)
         if len(parts) < 2:
@@ -337,8 +551,10 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                     player.rollback_claim(message.chat.id, claimed)
                     raise
                 _send_now(bot, message.chat.id, claimed)
+                _notify_play(bot, message, claimed, queued=False)
             else:
                 bot.send_message(message.chat.id, f"➕ تمت الإضافة: {track.title}\n📋 الترتيب: {position}")
+                _notify_play(bot, message, track, queued=True)
             try: bot.delete_message(message.chat.id, status.message_id)
             except Exception: pass
         except RuntimeError as exc:
@@ -465,27 +681,25 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             return True
 
     def _send_command_help(message) -> bool:
-        """Show only the developer-configured chat-commands button.
-
-        The actual music commands continue to work normally; this command is
-        only the public help surface and no longer dumps the full command list.
-        """
-        from database import setting_get
-
-        name = (setting_get("CHAT_COMMANDS_BUTTON_NAME") or "").strip()
-        url = (setting_get("CHAT_COMMANDS_BUTTON_URL") or "").strip()
-
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        if name and url:
-            markup.add(types.InlineKeyboardButton(name, url=url))
-            text = "💬 <b>أوامر الشات</b>"
-        else:
-            text = "💬 <b>أوامر الشات</b>\n\nلم يتم تعيين زر الأوامر من لوحة المطور بعد."
-
+        text = (
+            "🎵 <b>أوامر الشات</b>\n\n"
+            "▶️ <b>شغل اسم الأغنية</b> — يبحث ويشغل بالاتصال\n"
+            "▶️ <b>تشغيل اسم الأغنية</b> — نفس الشيء\n"
+            "↩️ <b>رد على MP3 واكتب شغل</b> — يشغل الملف المردود عليه\n"
+            "⏭️ <b>تخطي</b> — الأغنية التالية\n"
+            "⏹️ <b>ايقاف</b> / <b>وقف</b> — إيقاف التشغيل\n"
+            "⏸️ <b>مؤقت</b> / <b>إيقاف مؤقت</b> — إيقاف مؤقت\n"
+            "▶️ <b>استمرار</b> / <b>كمل</b> — استئناف\n"
+            "📋 <b>قائمة</b> / <b>الأغاني</b> — عرض القائمة\n"
+            "🗑️ <b>مسح</b> / <b>مسح القائمة</b> — مسح القائمة وإيقاف التشغيل\n"
+            "📥 <b>يوت اسم الأغنية</b> / <b>نزل</b> / <b>تنزيل</b> — تنزيل وإرسال MP3\n"
+            "👋 <b>خروج</b> / <b>فك</b> — الخروج من الاتصال\n"
+            "🔌 <b>اتصال</b> — الاتصال يُستخدم تلقائياً عند تشغيل أغنية\n"
+        )
         bot.reply_to(
             message,
             text,
-            reply_markup=markup,
+            reply_markup=chat_commands_markup(),
             parse_mode="HTML",
         )
         return True
@@ -523,6 +737,8 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             "مسح": "clear", "مسحالقائمة": "clear", "مسح_القائمة": "clear",
             "اتصال": "join", "دخول": "join",
             "خروج": "leave", "فك": "leave",
+            "حاضر": "presence", "حاضرين": "presence", "حاضرينه": "presence",
+            "المساعد": "presence", "المساعدحاضر": "presence",
             "اوامر": "help", "الوامر": "help", "الاوامر": "help",
             "اوامرالبوت": "help", "قائمةالاوامر": "help", "قائمهالاوامر": "help",
             "اوامرشات": "help", "اوامرالشات": "help", "امر": "help",
@@ -547,6 +763,17 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
         if message.chat.type not in {"group", "supergroup", "channel"}:
             return False
 
+        if action == "presence":
+            try:
+                if calls.assistant_present(message.chat.id):
+                    bot.reply_to(message, "🎙️ حاضرينه وهاي ❤️🎶")
+                else:
+                    bot.reply_to(message, "👋 المساعد مو موجود حالياً بهالكروب.")
+            except Exception:
+                log.exception("assistant presence check failed")
+                bot.reply_to(message, "⚠️ ماكدرت أتأكد من حضور المساعد حالياً.")
+            return True
+
         actor = getattr(getattr(message, "from_user", None), "id", None)
         is_channel = message.chat.type == "channel"
 
@@ -561,6 +788,10 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
         chat_id = message.chat.id
         try:
             if action == "play":
+                if _mandatory_subscription_wall(bot, message):
+                    return True
+                if _assistant_banned_message(message):
+                    return True
                 if not arg:
                     return _play_replied_audio(message)
                 bot.send_chat_action(chat_id, "typing")
@@ -585,9 +816,11 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                             raise
                         owns_job = False
                         _send_now(bot, chat_id, claimed)
+                        _notify_play(bot, message, claimed, queued=False)
                     else:
                         owns_job = False
                         bot.send_message(chat_id, f"➕ تمت الإضافة: {track.title}\n📋 الترتيب: {position}")
+                        _notify_play(bot, message, track, queued=True)
                 except Exception:
                     if owns_job:
                         cleanup_job(job)
@@ -601,14 +834,30 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                 if not arg:
                     bot.reply_to(message, "📥 اكتب اسم الأغنية بعد الأمر.\nمثال: يوت حسين الجسمي")
                     return True
-                bot.send_chat_action(chat_id, "upload_document")
+                bot.send_chat_action(chat_id, "upload_audio")
                 status = bot.reply_to(message, "📥 جاري تجهيز الملف...")
                 job = None
                 try:
                     info, path, job = download_audio(arg)
-                    title = info.get("title") or "audio"
+                    if not path.lower().endswith((".mp3", ".m4a")):
+                        raise RuntimeError("DOWNLOADER_RETURNED_UNSUPPORTED_AUDIO")
+                    title = str(info.get("title") or "audio").strip() or "audio"
+                    duration = max(0, int(info.get("duration") or 0))
                     with open(path, "rb") as audio:
-                        bot.send_audio(chat_id, audio, title=title, performer=info.get("uploader") or None)
+                        bot.send_audio(
+                            chat_id,
+                            audio,
+                            title=title,
+                            performer=_audio_jat_performer(),
+                            caption=_audio_jat_caption(),
+                            duration=duration,
+                            reply_markup=_audio_jat_markup(),
+                            parse_mode="HTML",
+                            reply_to_message_id=getattr(message, "message_id", None),
+                        )
+                except Exception:
+                    log.exception("JAT audio download/send failed")
+                    bot.reply_to(message, "❌ تعذر تجهيز أو إرسال الأغنية حالياً.")
                 finally:
                     cleanup_job(job)
                     try: bot.delete_message(chat_id, status.message_id)
@@ -681,9 +930,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
 
     @bot.message_handler(content_types=["text", "photo", "animation"])
     def message_router(message):
-        # Developer-panel input is private only; normal group/channel music
-        # commands continue through the regular chat-command path.
-        if message.chat.type == "private" and _handle_pending(bot, message): return
+        if _handle_pending(bot, message): return
         save_user(message.from_user); save_chat(message.chat)
         if _text_music_command(message): return
         if message.text and message.text.startswith("/"):
@@ -703,7 +950,22 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
         if handle_user_panel_callback(bot, call, lambda c,t,show=False: alert(bot,c,t,show)): return
         if data == "sub_check":
             missing = mandatory_missing(bot, call.from_user.id)
-            alert(bot, call, "❌ ما زال الاشتراك مطلوباً." if missing else "✅ تم التحقق من الاشتراك.", bool(missing)); return
+            if missing:
+                keyboard = types.InlineKeyboardMarkup(row_width=1)
+                first = missing[0]
+                url = str(first[3] or "").strip()
+                title = str(first[1] or "القناة المطلوبة")
+                if url:
+                    keyboard.add(types.InlineKeyboardButton(f"🟣 {title}", url=url))
+                keyboard.add(types.InlineKeyboardButton("✅ تحققت من الاشتراك", callback_data="sub_check"))
+                bot.answer_callback_query(call.id, "❌ ما زال الاشتراك مطلوباً.", show_alert=True)
+                try:
+                    bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=keyboard)
+                except Exception:
+                    pass
+            else:
+                bot.answer_callback_query(call.id, "✅ تم التحقق من الاشتراك.", show_alert=True)
+            return
         if data == "adm_home":
             if not admin_can(call.from_user.id): alert(bot, call, "🚫 لا تملك الصلاحية.", True); return
             bot.edit_message_text(admin_text(), call.message.chat.id, call.message.message_id, reply_markup=developer_markup()); return
@@ -742,7 +1004,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             _set_pending_from_callback(call,"broadcast","📣 أرسل نص الإذاعة الآن:",bot); return
         if data == "adm_stats":
             if not admin_can(call.from_user.id,"stats"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
-            u,c,a=counts(); alert(bot,call,f"👥 المستخدمون: {u}\n💬 المحادثات: {c}\n👨‍💻 المشرفون: {a}",True); return
+            u,c,a=counts(); alert(bot,call,f"👤 المستخدمون المسجلون: {u}\n💬 المحادثات المسجلة: {c}\n🛡️ المشرفون: {a}",True); return
         if data == "adm_users":
             if not admin_can(call.from_user.id,"users"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
             bot.edit_message_text("👥 إدارة المستخدمين",call.message.chat.id,call.message.message_id,reply_markup=users_markup()); return
