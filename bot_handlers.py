@@ -16,7 +16,7 @@ from database import (
     counts, delete_subscription, get_pending, get_permission_state, has_permission,
     is_admin, is_banned, list_sudos, remove_sudo, save_chat, save_user,
     set_permission, set_pending, setting_get, setting_set, unban_user, user_ids,
-    subscriptions,
+    subscriptions, save_private_user,
 )
 from developer_panel import (
     admin_text, admins_menu, developer_markup, permission_markup, permissions_select_markup,
@@ -163,44 +163,9 @@ def admin_can(user_id: int, permission: str | None = None) -> bool:
     return has_permission(user_id, permission, DEVELOPER_ID)
 
 
-def _add_bot_markup(bot) -> types.InlineKeyboardMarkup:
-    """Show direct Telegram links for adding the bot to a group or channel."""
-    keyboard = types.InlineKeyboardMarkup(row_width=1)
-    try:
-        me = bot.get_me()
-        username = (getattr(me, "username", "") or "").strip().lstrip("@")
-    except Exception:
-        username = ""
-
-    if username:
-        # Telegram opens the chat picker and lets the user add the bot directly.
-        group_url = (
-            f"https://t.me/{username}?startgroup&admin=manage_video_chats"
-        )
-        channel_url = (
-            f"https://t.me/{username}?startchannel&admin=manage_video_chats+post_messages"
-        )
-        keyboard.add(types.InlineKeyboardButton("➕ أضفني إلى كروب", url=group_url))
-        keyboard.add(types.InlineKeyboardButton("📢 أضفني إلى قناة", url=channel_url))
-
-    return keyboard
-
-
-def _private_add_bot_message(bot, message) -> None:
-    """Guide private-chat users to add the bot before using music commands."""
-    bot.reply_to(
-        message,
-        "⚠️ <b>حبيبي، البوت يشتغل داخل الكروبات والقنوات فقط.</b>\n\n"
-        "ضيفني للمكان اللي تريد أشغلك بيه، وبعدها اكتب أمر التشغيل هناك.\n\n"
-        "اختار من الأزرار أدناه:",
-        reply_markup=_add_bot_markup(bot),
-        parse_mode="HTML",
-    )
-
-
 def require_group(bot, message) -> bool:
     if message.chat.type not in {"group", "supergroup"}:
-        _private_add_bot_message(bot, message)
+        bot.reply_to(message, "❌ هذا الأمر يجب استخدامه داخل مجموعة.")
         return False
     return True
 
@@ -531,6 +496,10 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
 
     @bot.message_handler(commands=["start"])
     def start_handler(message):
+        # This counter is intentionally private-chat only: /start in a group
+        # must never inflate the private-user statistic.
+        if getattr(message.chat, "type", None) == "private":
+            save_private_user(message.from_user)
         handle_start(bot, message, bot_username)
         _notify_start(bot, message)
 
@@ -725,26 +694,23 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             return True
 
     def _send_command_help(message) -> bool:
-        text = (
-            "🎵 <b>أوامر الشات</b>\n\n"
-            "▶️ <b>شغل اسم الأغنية</b> — يبحث ويشغل بالاتصال\n"
-            "▶️ <b>تشغيل اسم الأغنية</b> — نفس الشيء\n"
-            "▶️ <b>تحميل اسم الأغنية</b> — نفس التشغيل بالاتصال\n"
-            "↩️ <b>رد على MP3 واكتب شغل</b> — يشغل الملف المردود عليه\n"
-            "⏭️ <b>تخطي</b> — الأغنية التالية\n"
-            "⏹️ <b>ايقاف</b> / <b>وقف</b> — إيقاف التشغيل\n"
-            "⏸️ <b>مؤقت</b> / <b>إيقاف مؤقت</b> — إيقاف مؤقت\n"
-            "▶️ <b>استمرار</b> / <b>كمل</b> — استئناف\n"
-            "📋 <b>قائمة</b> / <b>الأغاني</b> — عرض القائمة\n"
-            "🗑️ <b>مسح</b> / <b>مسح القائمة</b> — مسح القائمة وإيقاف التشغيل\n"
-            "📥 <b>يوت اسم الأغنية</b> / <b>نزل</b> / <b>تنزيل</b> — تنزيل وإرسال MP3\n"
-            "👋 <b>خروج</b> / <b>فك</b> — الخروج من الاتصال\n"
-            "🔌 <b>اتصال</b> — الاتصال يُستخدم تلقائياً عند تشغيل أغنية\n"
-        )
+        """Show only the developer-configured chat commands button."""
+        name = (setting_get("CHAT_COMMANDS_BUTTON_NAME") or "").strip()
+        url = (setting_get("CHAT_COMMANDS_BUTTON_URL") or "").strip()
+
+        keyboard = types.InlineKeyboardMarkup(row_width=1)
+        if name and url:
+            keyboard.add(
+                types.InlineKeyboardButton(
+                    name[:64],
+                    url=url,
+                )
+            )
+
         bot.reply_to(
             message,
-            text,
-            reply_markup=chat_commands_markup(),
+            "💬 <b>أوامر الشات</b>",
+            reply_markup=keyboard,
             parse_mode="HTML",
         )
         return True
@@ -806,8 +772,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             return _send_command_help(message)
 
         if message.chat.type not in {"group", "supergroup", "channel"}:
-            _private_add_bot_message(bot, message)
-            return True
+            return False
 
         if action == "presence":
             try:
@@ -1104,23 +1069,4 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                 elif data=="music_add":
                     user = call.from_user
                     first_name = escape(getattr(user, "first_name", None) or "عضو")
-                    username = getattr(user, "username", None)
-                    if username:
-                        mention = f"@{escape(username)}"
-                    else:
-                        mention = f'<a href="tg://user?id={int(user.id)}">{first_name}</a>'
-                    current = player.current(chat_id)
-                    song_name = escape(current.title) if current else "الأغنية الحالية"
-                    bot.send_message(
-                        chat_id,
-                        f"➕ {mention} أضاف/طلب {song_name}",
-                        parse_mode="HTML",
-                        reply_to_message_id=call.message.message_id,
-                    )
-                alert(bot,call,"تم.")
-            except Exception: log.exception("playback callback failed"); alert(bot,call,"❌ تعذر التنفيذ.",True)
-            return
-        alert(bot,call,"ℹ️ الطلب غير معروف.")
-
-    calls.set_stream_end_handler(lambda chat_id: _stream_end(bot, calls, player, chat_id))
-
+               
