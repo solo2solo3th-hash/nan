@@ -20,6 +20,7 @@ from database import (
     remove_sudo,
     set_permission,
     set_all_permissions,
+    setting_get,
     setting_set,
     subscriptions,
 )
@@ -174,8 +175,8 @@ def statistics_text():
     s = _counts()
     return (
         "📊 <b>إحصائيات البوت:</b>\n\n"
-        f"👤 عدد الأعضاء: <code>{s['users']}</code>\n"
-        f"💬 عدد المحادثات: <code>{s['chats']}</code>\n"
+        f"👤 المستخدمون المسجلون: <code>{s['users']}</code>\n"
+        f"💬 المحادثات المسجلة: <code>{s['chats']}</code>\n"
         f"🛡️ عدد المشرفين: <code>{s['admins']}</code>"
     )
 
@@ -421,6 +422,10 @@ def _sub_target(item):
 
 def forced_sub_markup():
     m = types.InlineKeyboardMarkup(row_width=1)
+    enabled = setting_get("SUBS_ENABLED") == "ON"
+    m.add(types.InlineKeyboardButton(
+        "اجباري الاستخدام", callback_data="fs_toggle_usage"
+    ))
     for item in subscriptions():
         sid = _sub_id(item)
         target = _sub_target(item)
@@ -439,7 +444,8 @@ def forced_sub_markup():
 def show_forced_sub(bot, call):
     rows = subscriptions()
     current = ", ".join(str(_sub_target(x)) for x in rows) if rows else "لا توجد قناة"
-    status = "مفعل 🟢" if rows else "معطل 🔴"
+    enabled = setting_get("SUBS_ENABLED") == "ON"
+    status = "مفعل 🟢" if enabled and rows else "معطل 🔴"
     bot.edit_message_text(
         "📢 <b>إعدادات الاشتراك الإجباري:</b>\n\n"
         f"الحالة: <b>{status}</b>\n"
@@ -562,12 +568,84 @@ def playback_settings_markup():
     m = types.InlineKeyboardMarkup(row_width=1)
     m.add(types.InlineKeyboardButton("✍️ الكتابة: الاسم + الرابط", callback_data="play_credit_pair"))
     m.add(types.InlineKeyboardButton("🎵 زر الموسيقى: الاسم + الرابط", callback_data="play_music_pair"))
-    m.add(types.InlineKeyboardButton("🔘 الزر الأول: الاسم + الرابط", callback_data="play_custom_btn1"))
-    m.add(types.InlineKeyboardButton("🔘 الزر الثاني: الاسم + الرابط", callback_data="play_custom_btn2"))
     m.add(types.InlineKeyboardButton("🖼️ صورة لوحة التشغيل", callback_data="play_set_image"))
-    m.add(types.InlineKeyboardButton("🎨 ألوان/شكل اللوحة", callback_data="play_colors_info"))
+    m.add(types.InlineKeyboardButton("🎨 ألوان أزرار لوحة التشغيل", callback_data="play_button_colors"))
+    m.add(types.InlineKeyboardButton("🎵 أغنية الجات", callback_data="jat_audio_menu"))
     m.add(types.InlineKeyboardButton("↩️ رجوع", callback_data="back_to_main"))
     return m
+
+
+_PLAYBACK_BUTTON_LABELS = {
+    "pause": "⏸️ إيقاف مؤقت",
+    "resume": "▶️ استئناف",
+    "skip": "⏭️ تخطي",
+    "stop": "⏹️ إنهاء",
+    "queue": "📋 القائمة",
+    "add": "➕ إضافة",
+    "custom": "🔗 الزر المخصص",
+}
+
+_PLAYBACK_COLOR_LABELS = {
+    "default": "⚪ افتراضي",
+    "primary": "🔵 أزرق",
+    "success": "🟢 أخضر",
+    "danger": "🔴 أحمر",
+}
+
+
+def playback_button_colors_markup():
+    m = types.InlineKeyboardMarkup(row_width=1)
+    for key, label in _PLAYBACK_BUTTON_LABELS.items():
+        current = (setting_get(f"PLAY_BTN_COLOR_{key.upper()}") or "default").strip().lower()
+        if current not in _PLAYBACK_COLOR_LABELS:
+            current = "default"
+        m.add(types.InlineKeyboardButton(
+            f"{label} — {_PLAYBACK_COLOR_LABELS[current]}",
+            callback_data=f"play_color:{key}",
+        ))
+    m.add(types.InlineKeyboardButton("🧹 إرجاع كل الألوان افتراضي", callback_data="play_colors_reset"))
+    m.add(types.InlineKeyboardButton("↩️ رجوع", callback_data="dev_playback_settings"))
+    return m
+
+
+def playback_button_color_picker(key: str):
+    label = _PLAYBACK_BUTTON_LABELS.get(key, key)
+    m = types.InlineKeyboardMarkup(row_width=2)
+    for color, color_label in _PLAYBACK_COLOR_LABELS.items():
+        m.add(types.InlineKeyboardButton(
+            color_label, callback_data=f"play_color_set:{key}:{color}"
+        ))
+    m.add(types.InlineKeyboardButton("↩️ رجوع", callback_data="play_button_colors"))
+    return m
+
+
+def jat_audio_markup():
+    m = types.InlineKeyboardMarkup(row_width=1)
+    m.add(types.InlineKeyboardButton("🔘 الزر تحت الأغنية: الاسم + الرابط", callback_data="jat_audio_button"))
+    m.add(types.InlineKeyboardButton("📝 الكتابة داخل الأغنية: الاسم + الرابط", callback_data="jat_audio_credit"))
+    m.add(types.InlineKeyboardButton("🎤 مصدر الأغنية", callback_data="jat_audio_performer"))
+    m.add(types.InlineKeyboardButton("🗑️ مسح إعدادات أغنية الجات", callback_data="jat_audio_clear"))
+    m.add(types.InlineKeyboardButton("↩️ رجوع", callback_data="dev_playback_settings"))
+    return m
+
+
+def show_jat_audio(bot, call):
+    from database import setting_get
+    button_name = setting_get("JAT_AUDIO_BUTTON_NAME") or "غير محدد"
+    button_url = setting_get("JAT_AUDIO_BUTTON_URL") or "غير محدد"
+    credit_name = setting_get("JAT_AUDIO_CREDIT_NAME") or "غير محدد"
+    credit_url = setting_get("JAT_AUDIO_CREDIT_URL") or "غير محدد"
+    performer = setting_get("JAT_AUDIO_PERFORMER") or "من نينو"
+    bot.edit_message_text(
+        "🎵 <b>أغنية الجات</b>\n\n"
+        f"🔘 زر تحت الأغنية: <code>{button_name}</code>\n"
+        f"🔗 الرابط: <code>{button_url}</code>\n\n"
+        f"📝 الكتابة داخل الأغنية: <code>{credit_name}</code>\n"
+        f"🔗 الرابط: <code>{credit_url}</code>\n\n"
+        f"🎤 المصدر الظاهر: <code>{performer}</code>",
+        call.message.chat.id, call.message.message_id,
+        reply_markup=jat_audio_markup(), parse_mode="HTML"
+    )
 
 
 def chat_commands_markup():
@@ -596,10 +674,6 @@ def show_playback_settings(bot, call):
     credit_url = setting_get("PLAY_CREDIT_URL") or "غير محدد"
     music_name = setting_get("PLAY_MUSIC_BUTTON_NAME") or "غير محدد"
     music_url = setting_get("PLAY_MUSIC_BUTTON_URL") or "غير محدد"
-    btn1_name = setting_get("CUSTOM_BTN1_NAME") or "غير محدد"
-    btn1_url = setting_get("CUSTOM_BTN1_URL") or "غير محدد"
-    btn2_name = setting_get("CUSTOM_BTN2_NAME") or "غير محدد"
-    btn2_url = setting_get("CUSTOM_BTN2_URL") or "غير محدد"
     image_type = setting_get("PLAY_IMAGE_TYPE") or "photo"
     bot.edit_message_text(
         "🎛️ <b>لوحة التشغيل</b>\n\n"
@@ -607,10 +681,6 @@ def show_playback_settings(bot, call):
         f"🔗 الرابط: <code>{credit_url}</code>\n"
         f"🎵 زر الموسيقى: <code>{music_name}</code>\n"
         f"🔗 الرابط: <code>{music_url}</code>\n"
-        f"🔘 الزر الأول: <code>{btn1_name}</code>\n"
-        f"🔗 الرابط: <code>{btn1_url}</code>\n"
-        f"🔘 الزر الثاني: <code>{btn2_name}</code>\n"
-        f"🔗 الرابط: <code>{btn2_url}</code>\n"
         f"🖼️ الصورة: <code>{image_type}</code>",
         call.message.chat.id, call.message.message_id,
         reply_markup=playback_settings_markup(), parse_mode="HTML"
@@ -625,9 +695,6 @@ def begin_playback_input(bot, call, mode, prompt):
     )
 
 def open_panel(bot, message):
-    # The developer panel is a private-chat surface only.
-    if getattr(getattr(message, "chat", None), "type", None) != "private":
-        return False
     if not is_developer(message.from_user.id):
         return False
     bot.send_message(
@@ -647,11 +714,6 @@ def _back_to_main(bot, call):
 
 def handle_callback(bot, call):
     """Return True when this developer-panel callback was consumed."""
-    # Never process developer-panel callbacks from group/channel messages.
-    # This keeps private-panel controls completely out of chat surfaces.
-    if getattr(getattr(call, "message", None), "chat", None) is not None:
-        if getattr(call.message.chat, "type", None) != "private":
-            return False
     if not is_developer(call.from_user.id):
         if (call.data or "").startswith(("dev_", "admin_", "bc_", "toggle_perm:", "fs_", "set_fs_", "back_to_main", "close_menu")):
             bot.answer_callback_query(call.id, "⛔ هذه اللوحة خاصة بالمطور.", show_alert=True)
@@ -684,6 +746,15 @@ def handle_callback(bot, call):
         return True
     if data == "dev_forced_sub":
         bot.answer_callback_query(call.id); show_forced_sub(bot, call); return True
+    if data == "fs_toggle_usage":
+        enabled = setting_get("SUBS_ENABLED") == "ON"
+        if not subscriptions():
+            bot.answer_callback_query(call.id, "⚠️ أضف قناة أو كروب أولاً.", show_alert=True)
+            return True
+        setting_set("SUBS_ENABLED", "OFF" if enabled else "ON")
+        bot.answer_callback_query(call.id, "🟢 تم تفعيل إجباري الاستخدام." if not enabled else "🔴 تم إيقاف إجباري الاستخدام.")
+        show_forced_sub(bot, call)
+        return True
     if data == "set_fs_channel":
         bot.answer_callback_query(call.id); begin_set_forced_channel(bot, call); return True
     if data.startswith("fs_remove:"):
@@ -710,6 +781,75 @@ def handle_callback(bot, call):
         bot.answer_callback_query(call.id, "✅ تم حذف زر أوامر الشات.")
         show_chat_commands(bot, call)
         return True
+    if data == "play_button_colors":
+        bot.answer_callback_query(call.id)
+        bot.edit_message_text(
+            "🎨 <b>ألوان أزرار لوحة التشغيل</b>\n\nاختر الزر حتى تحدد لونه:",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=playback_button_colors_markup(), parse_mode="HTML"
+        )
+        return True
+    if data.startswith("play_color:"):
+        key = data.split(":", 1)[1]
+        if key not in _PLAYBACK_BUTTON_LABELS:
+            bot.answer_callback_query(call.id, "الزر غير معروف.", show_alert=True)
+            return True
+        bot.answer_callback_query(call.id)
+        bot.edit_message_text(
+            f"🎨 <b>{_PLAYBACK_BUTTON_LABELS[key]}</b>\n\nاختر اللون:",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=playback_button_color_picker(key), parse_mode="HTML"
+        )
+        return True
+    if data.startswith("play_color_set:"):
+        _, key, color = data.split(":", 2)
+        if key not in _PLAYBACK_BUTTON_LABELS or color not in _PLAYBACK_COLOR_LABELS:
+            bot.answer_callback_query(call.id, "إعداد غير صالح.", show_alert=True)
+            return True
+        setting_set(f"PLAY_BTN_COLOR_{key.upper()}", color)
+        bot.answer_callback_query(call.id, f"تم اختيار {_PLAYBACK_COLOR_LABELS[color]}")
+        bot.edit_message_text(
+            "🎨 <b>ألوان أزرار لوحة التشغيل</b>\n\nاختر الزر حتى تحدد لونه:",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=playback_button_colors_markup(), parse_mode="HTML"
+        )
+        return True
+    if data == "play_colors_reset":
+        for key in _PLAYBACK_BUTTON_LABELS:
+            setting_set(f"PLAY_BTN_COLOR_{key.upper()}", "default")
+        bot.answer_callback_query(call.id, "✅ رجعت كل الألوان للوضع الافتراضي.")
+        bot.edit_message_text(
+            "🎨 <b>ألوان أزرار لوحة التشغيل</b>\n\nاختر الزر حتى تحدد لونه:",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=playback_button_colors_markup(), parse_mode="HTML"
+        )
+        return True
+
+    if data == "jat_audio_menu":
+        bot.answer_callback_query(call.id)
+        show_jat_audio(bot, call)
+        return True
+    if data == "jat_audio_button":
+        bot.answer_callback_query(call.id)
+        begin_playback_input(bot, call, "jat_audio_button", "🔘 أرسل بالصيغة: <code>اسم الزر : الرابط</code>")
+        return True
+    if data == "jat_audio_credit":
+        bot.answer_callback_query(call.id)
+        begin_playback_input(bot, call, "jat_audio_credit", "📝 أرسل بالصيغة: <code>الكتابة : الرابط</code>\nستظهر ككتابة قابلة للضغط أسفل الأغنية، وليست زرًا.")
+        return True
+    if data == "jat_audio_performer":
+        bot.answer_callback_query(call.id)
+        begin_playback_input(bot, call, "jat_audio_performer", "🎤 أرسل اسم المصدر الظاهر أسفل اسم الأغنية.\nمثال: <code>من نينو</code> أو <code>غير معروف</code>")
+        return True
+    if data == "jat_audio_clear":
+        setting_set("JAT_AUDIO_BUTTON_NAME", "")
+        setting_set("JAT_AUDIO_BUTTON_URL", "")
+        setting_set("JAT_AUDIO_CREDIT_NAME", "")
+        setting_set("JAT_AUDIO_CREDIT_URL", "")
+        setting_set("JAT_AUDIO_PERFORMER", "من نينو")
+        bot.answer_callback_query(call.id, "✅ تم مسح إعدادات أغنية الجات.")
+        show_jat_audio(bot, call)
+        return True
     if data == "dev_playback_settings":
         bot.answer_callback_query(call.id)
         show_playback_settings(bot, call)
@@ -721,25 +861,6 @@ def handle_callback(bot, call):
     if data == "play_music_pair":
         bot.answer_callback_query(call.id)
         begin_playback_input(bot, call, "play_music_pair", "🎵 أرسل بالصيغة: <code>اسم الزر : الرابط</code>")
-        return True
-    if data == "play_custom_btn1":
-        bot.answer_callback_query(call.id)
-        begin_playback_input(bot, call, "play_custom_btn1", "🔘 أرسل بالصيغة: <code>اسم الزر : الرابط</code>")
-        return True
-    if data == "play_custom_btn2":
-        bot.answer_callback_query(call.id)
-        begin_playback_input(bot, call, "play_custom_btn2", "🔘 أرسل بالصيغة: <code>اسم الزر : الرابط</code>")
-        return True
-    if data == "play_colors_info":
-        bot.answer_callback_query(call.id)
-        bot.edit_message_text(
-            "🎨 <b>ألوان لوحة التشغيل</b>\n\n"
-            "تيليجرام لا يسمح للبوت بتغيير لون خلفية أزرار Inline حسب اللون الذي يختاره المطور. "
-            "لون الزر نفسه يحدده تطبيق تيليجرام والثيم.\n\n"
-            "أكدر أتحكم بالاسم، الإيموجي، ترتيب الأزرار، الصورة، والنص؛ أما لون الخلفية فلا يمكن فرضه من Bot API.",
-            call.message.chat.id, call.message.message_id,
-            reply_markup=back_markup(), parse_mode="HTML"
-        )
         return True
     if data == "play_set_image":
         bot.answer_callback_query(call.id)
@@ -816,10 +937,6 @@ def handle_callback(bot, call):
 
 def handle_input(bot, message):
     """Handle non-broadcast text input belonging to the developer panel."""
-    # Settings entered for the developer panel are accepted from private chat
-    # only, preventing a group/channel message from changing global settings.
-    if getattr(getattr(message, "chat", None), "type", None) != "private":
-        return False
     if not is_developer(message.from_user.id):
         return False
 
@@ -831,13 +948,19 @@ def handle_input(bot, message):
     if state == "waiting_fs_channel":
         return add_forced_channel_from_message(bot, message)
 
-    if state in {"play_credit_pair", "play_music_pair", "play_custom_btn1", "play_custom_btn2", "chat_cmd_button"}:
+    if state in {"play_credit_pair", "play_music_pair", "chat_cmd_button", "jat_audio_button", "jat_audio_credit"}:
         text = (message.text or "").strip()
         parts = [part.strip() for part in text.split(":", 1)]
         if len(parts) != 2 or not parts[0] or not parts[1]:
             bot.reply_to(message, "❌ الصيغة الصحيحة: اسم الزر : الرابط")
             return True
         name, url = parts
+        if len(name) > 64:
+            bot.reply_to(message, "❌ اسم الزر يجب ألا يتجاوز 64 حرفاً.")
+            return True
+        if len(url) > 2048:
+            bot.reply_to(message, "❌ الرابط طويل جداً (الحد 2048 حرفاً).")
+            return True
         if not url.startswith(("https://", "http://", "tg://")):
             bot.reply_to(message, "❌ الرابط يجب أن يبدأ بـ https:// أو http:// أو tg://")
             return True
@@ -847,17 +970,27 @@ def handle_input(bot, message):
         elif state == "play_music_pair":
             setting_set("PLAY_MUSIC_BUTTON_NAME", name)
             setting_set("PLAY_MUSIC_BUTTON_URL", url)
-        elif state == "play_custom_btn1":
-            setting_set("CUSTOM_BTN1_NAME", name)
-            setting_set("CUSTOM_BTN1_URL", url)
-        elif state == "play_custom_btn2":
-            setting_set("CUSTOM_BTN2_NAME", name)
-            setting_set("CUSTOM_BTN2_URL", url)
+        elif state == "jat_audio_button":
+            setting_set("JAT_AUDIO_BUTTON_NAME", name)
+            setting_set("JAT_AUDIO_BUTTON_URL", url)
+        elif state == "jat_audio_credit":
+            setting_set("JAT_AUDIO_CREDIT_NAME", name)
+            setting_set("JAT_AUDIO_CREDIT_URL", url)
         else:
             setting_set("CHAT_COMMANDS_BUTTON_NAME", name)
             setting_set("CHAT_COMMANDS_BUTTON_URL", url)
         pending_input_set(message.from_user.id, None)
         bot.reply_to(message, "✅ تم حفظ الزر والرابط.")
+        return True
+
+    if state == "jat_audio_performer":
+        performer = (message.text or "").strip()
+        if not performer:
+            bot.reply_to(message, "❌ اكتب اسم المصدر، مثال: من نينو")
+            return True
+        setting_set("JAT_AUDIO_PERFORMER", performer[:64])
+        pending_input_set(message.from_user.id, None)
+        bot.reply_to(message, "✅ تم حفظ مصدر الأغنية.")
         return True
 
     # Playback panel image/GIF input is handled here before the generic
