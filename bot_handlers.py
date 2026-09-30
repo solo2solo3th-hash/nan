@@ -163,9 +163,44 @@ def admin_can(user_id: int, permission: str | None = None) -> bool:
     return has_permission(user_id, permission, DEVELOPER_ID)
 
 
+def _add_bot_markup(bot) -> types.InlineKeyboardMarkup:
+    """Show direct Telegram links for adding the bot to a group or channel."""
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+    try:
+        me = bot.get_me()
+        username = (getattr(me, "username", "") or "").strip().lstrip("@")
+    except Exception:
+        username = ""
+
+    if username:
+        # Telegram opens the chat picker and lets the user add the bot directly.
+        group_url = (
+            f"https://t.me/{username}?startgroup&admin=manage_video_chats"
+        )
+        channel_url = (
+            f"https://t.me/{username}?startchannel&admin=manage_video_chats+post_messages"
+        )
+        keyboard.add(types.InlineKeyboardButton("➕ أضفني إلى كروب", url=group_url))
+        keyboard.add(types.InlineKeyboardButton("📢 أضفني إلى قناة", url=channel_url))
+
+    return keyboard
+
+
+def _private_add_bot_message(bot, message) -> None:
+    """Guide private-chat users to add the bot before using music commands."""
+    bot.reply_to(
+        message,
+        "⚠️ <b>حبيبي، البوت يشتغل داخل الكروبات والقنوات فقط.</b>\n\n"
+        "ضيفني للمكان اللي تريد أشغلك بيه، وبعدها اكتب أمر التشغيل هناك.\n\n"
+        "اختار من الأزرار أدناه:",
+        reply_markup=_add_bot_markup(bot),
+        parse_mode="HTML",
+    )
+
+
 def require_group(bot, message) -> bool:
     if message.chat.type not in {"group", "supergroup"}:
-        bot.reply_to(message, "❌ هذا الأمر يجب استخدامه داخل مجموعة.")
+        _private_add_bot_message(bot, message)
         return False
     return True
 
@@ -233,25 +268,37 @@ def _playback_button_style(key: str) -> str | None:
 
 
 def playback_controls():
-    """Build the existing playback keyboard without changing its layout."""
+    """Build the exact requested playback panel layout."""
     keyboard = types.InlineKeyboardMarkup(row_width=3)
+
+    # Row 1: تخطي / إنهاء / إيقاف
     keyboard.row(
-        types.InlineKeyboardButton("⏸️", callback_data="music_pause", style=_playback_button_style("pause")),
-        types.InlineKeyboardButton("▶️", callback_data="music_resume", style=_playback_button_style("resume")),
-        types.InlineKeyboardButton("⏭️", callback_data="music_skip", style=_playback_button_style("skip")),
-    )
-    keyboard.row(
-        types.InlineKeyboardButton("⏹️", callback_data="music_stop", style=_playback_button_style("stop")),
-        types.InlineKeyboardButton("📋 القائمة", callback_data="music_queue", style=_playback_button_style("queue")),
-        types.InlineKeyboardButton("➕", callback_data="music_add", style=_playback_button_style("add")),
+        types.InlineKeyboardButton("تخطي", callback_data="music_skip", style=_playback_button_style("skip")),
+        types.InlineKeyboardButton("إنهاء", callback_data="music_stop", style=_playback_button_style("stop")),
+        types.InlineKeyboardButton("إيقاف", callback_data="music_pause", style=_playback_button_style("pause")),
     )
 
-    button_name = (setting_get("PLAY_MUSIC_BUTTON_NAME") or "").strip()
-    button_url = (setting_get("PLAY_MUSIC_BUTTON_URL") or "").strip()
-    if button_name and button_url:
-        keyboard.row(types.InlineKeyboardButton(
-            button_name[:64], url=button_url, style=_playback_button_style("custom")
-        ))
+    # Row 2: -10s / تشغيل / +10s
+    keyboard.row(
+        types.InlineKeyboardButton("-10s", callback_data="music_rewind_10", style=_playback_button_style("rewind")),
+        types.InlineKeyboardButton("▶️", callback_data="music_resume", style=_playback_button_style("resume")),
+        types.InlineKeyboardButton("+10s", callback_data="music_forward_10", style=_playback_button_style("forward")),
+    )
+
+    # Row 3: developer-configured custom button #1
+    btn1_name = (setting_get("CUSTOM_BTN1_NAME") or "").strip()
+    btn1_url = (setting_get("CUSTOM_BTN1_URL") or "").strip()
+    if btn1_name and btn1_url:
+        keyboard.row(types.InlineKeyboardButton(btn1_name[:64], url=btn1_url))
+
+    # Row 4: developer-configured custom button #2
+    btn2_name = (setting_get("CUSTOM_BTN2_NAME") or "").strip()
+    btn2_url = (setting_get("CUSTOM_BTN2_URL") or "").strip()
+    if btn2_name and btn2_url:
+        keyboard.row(types.InlineKeyboardButton(btn2_name[:64], url=btn2_url))
+
+    # Bottom row: requested top button.
+    keyboard.row(types.InlineKeyboardButton("🔝", callback_data="music_top"))
     return keyboard
 
 
@@ -260,13 +307,10 @@ def _playback_text(track: Track | None) -> str:
         return "⏹️ انتهت قائمة التشغيل."
 
     title = escape(str(track.title))
-    text = f"🎵 الآن: {title}\n⏱️ {duration_text(track.duration)}"
-    credit_name = (setting_get("PLAY_CREDIT_NAME") or "").strip()
-    credit_url = (setting_get("PLAY_CREDIT_URL") or "").strip()
-    if credit_name and credit_url:
-        safe_name = escape(credit_name)
-        safe_url = escape(credit_url, quote=True)
-        text += f'\n\n✍️ <a href="{safe_url}">{safe_name}</a>'
+    text = (
+        f"حبيب ياسر شغنالك: {title}\n"
+        f"مدة التشغيل: {duration_text(track.duration)}"
+    )
     return text
 
 
@@ -685,6 +729,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             "🎵 <b>أوامر الشات</b>\n\n"
             "▶️ <b>شغل اسم الأغنية</b> — يبحث ويشغل بالاتصال\n"
             "▶️ <b>تشغيل اسم الأغنية</b> — نفس الشيء\n"
+            "▶️ <b>تحميل اسم الأغنية</b> — نفس التشغيل بالاتصال\n"
             "↩️ <b>رد على MP3 واكتب شغل</b> — يشغل الملف المردود عليه\n"
             "⏭️ <b>تخطي</b> — الأغنية التالية\n"
             "⏹️ <b>ايقاف</b> / <b>وقف</b> — إيقاف التشغيل\n"
@@ -727,7 +772,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
         command = _normalize_chat_command(parts[0])
         arg = parts[1].strip() if len(parts) > 1 else ""
         aliases = {
-            "شغل": "play", "تشغيل": "play",
+            "شغل": "play", "تشغيل": "play", "تحميل": "play",
             "يوت": "download", "نزل": "download", "تنزيل": "download",
             "تخطي": "skip", "التالي": "skip", "التاليه": "skip",
             "ايقاف": "stop", "إيقاف": "stop", "وقف": "stop", "توقف": "stop",
@@ -761,7 +806,8 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             return _send_command_help(message)
 
         if message.chat.type not in {"group", "supergroup", "channel"}:
-            return False
+            _private_add_bot_message(bot, message)
+            return True
 
         if action == "presence":
             try:
@@ -1045,7 +1091,16 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                     player.stop(chat_id); bot.send_message(chat_id,"⏹️ تم الإيقاف.")
                 elif data=="music_pause": calls.pause(chat_id); bot.send_message(chat_id,"⏸️ تم الإيقاف المؤقت.")
                 elif data=="music_resume": calls.resume(chat_id); bot.send_message(chat_id,"▶️ تم الاستئناف.")
+                elif data in {"music_rewind_10", "music_forward_10"}:
+                    # Keep the requested buttons visible without pretending the current
+                    # VoiceCallRunner has a seek primitive.
+                    direction = "للخلف" if data == "music_rewind_10" else "للأمام"
+                    alert(bot, call, f"⏱️ زر التقديم/الترجيع {direction} جاهز، لكن محرك الصوت الحالي لا يدعم seek بأمان.", True)
+                    return
                 elif data=="music_queue": _send_queue(bot,player,chat_id)
+                elif data=="music_top":
+                    alert(bot, call, "🔝", False)
+                    return
                 elif data=="music_add":
                     user = call.from_user
                     first_name = escape(getattr(user, "first_name", None) or "عضو")
@@ -1068,3 +1123,4 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
         alert(bot,call,"ℹ️ الطلب غير معروف.")
 
     calls.set_stream_end_handler(lambda chat_id: _stream_end(bot, calls, player, chat_id))
+
