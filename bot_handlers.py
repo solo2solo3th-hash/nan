@@ -226,7 +226,7 @@ def user_can_play(message, permission: str = "playback") -> bool:
     return True
 
 
-def _playback_button_style(key: str) -> str | None:
+def playback_button_style(key: str) -> str | None:
     """Return the Telegram semantic button style selected by the developer."""
     value = (setting_get(f"PLAY_BTN_COLOR_{key.upper()}") or "default").strip().lower()
     return value if value in {"primary", "success", "danger"} else None
@@ -238,16 +238,16 @@ def playback_controls():
 
     # Row 1: تخطي / إنهاء / إيقاف
     keyboard.row(
-        types.InlineKeyboardButton("تخطي", callback_data="music_skip", style=_playback_button_style("skip")),
-        types.InlineKeyboardButton("إنهاء", callback_data="music_stop", style=_playback_button_style("stop")),
-        types.InlineKeyboardButton("إيقاف", callback_data="music_pause", style=_playback_button_style("pause")),
+        types.InlineKeyboardButton("تخطي", callback_data="music_skip", style=playback_button_style("skip")),
+        types.InlineKeyboardButton("إنهاء", callback_data="music_stop", style=playback_button_style("stop")),
+        types.InlineKeyboardButton("إيقاف", callback_data="music_pause", style=playback_button_style("pause")),
     )
 
     # Row 2: -10s / تشغيل / +10s
     keyboard.row(
-        types.InlineKeyboardButton("-10s", callback_data="music_rewind_10", style=_playback_button_style("rewind")),
-        types.InlineKeyboardButton("▶️", callback_data="music_resume", style=_playback_button_style("resume")),
-        types.InlineKeyboardButton("+10s", callback_data="music_forward_10", style=_playback_button_style("forward")),
+        types.InlineKeyboardButton("-10s", callback_data="music_rewind_10", style=playback_button_style("rewind")),
+        types.InlineKeyboardButton("▶️", callback_data="music_resume", style=playback_button_style("resume")),
+        types.InlineKeyboardButton("+10s", callback_data="music_forward_10", style=playback_button_style("forward")),
     )
 
     # Row 3: developer-configured custom button #1
@@ -1069,4 +1069,4 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                 elif data=="music_add":
                     user = call.from_user
                     first_name = escape(getattr(user, "first_name", None) or "عضو")
-               
+                    us
