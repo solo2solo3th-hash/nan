@@ -614,7 +614,6 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
         if require_group(bot, message): _send_queue(bot, player, message.chat.id)
 
 
-
     def _play_replied_audio(message) -> bool:
         """Play an audio/document replied to by `شغل` or `تشغيل`."""
         replied = getattr(message, "reply_to_message", None)
@@ -1069,4 +1068,4 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                 elif data=="music_add":
                     user = call.from_user
                     first_name = escape(getattr(user, "first_name", None) or "عضو")
-                    us
+                    use
