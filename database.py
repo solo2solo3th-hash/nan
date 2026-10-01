@@ -1,4 +1,4 @@
-"""Thread-safe SQLite persistence layer."""
+"""Thread-safe SQLite persistence layer for the Telegram bot."""
 from __future__ import annotations
 
 import sqlite3
@@ -45,9 +45,7 @@ PERMISSION_GROUPS = {
         "remove": "➖ حذف اشتراك",
         "toggle": "🔛 تشغيل/إيقاف الإجباري",
     },
-    "stats": {
-        "view": "📊 عرض الإحصائيات",
-    },
+    "stats": {"view": "📊 عرض الإحصائيات"},
     "user_panel": {
         "view": "👤 فتح لوحة العضو",
         "start_text": "📝 تعديل نص /start",
@@ -63,9 +61,7 @@ PERMISSION_GROUPS = {
         "source1": "1️⃣ تعديل المصدر الأول",
         "source2": "2️⃣ تعديل المصدر الثاني",
     },
-    "settings": {
-        "view": "⚙️ فتح إعدادات البوت",
-    },
+    "settings": {"view": "⚙️ فتح إعدادات البوت"},
     "sources": {
         "youtube": "▶️ مصدر YouTube",
         "spotify": "🟢 مصدر Spotify/metadata",
@@ -77,9 +73,7 @@ PERMISSION_GROUPS = {
         "view": "📢 عرض القنوات",
         "manage": "🛠️ إدارة القنوات",
     },
-    "social": {
-        "manage": "🌐 إدارة الروابط الاجتماعية",
-    },
+    "social": {"manage": "🌐 إدارة الروابط الاجتماعية"},
 }
 
 PERMISSIONS = {
@@ -88,8 +82,6 @@ PERMISSIONS = {
     for key, label in items.items()
 }
 
-# Names used by older modules are kept as compatibility aliases. New code
-# should always use the granular keys above.
 LEGACY_PERMISSION_ALIASES = {
     "playback": "playback.play",
     "users": "users.view",
@@ -105,6 +97,7 @@ LEGACY_PERMISSION_ALIASES = {
 
 
 def db() -> sqlite3.Connection:
+    """Open a configured SQLite connection; parent directories are created as needed."""
     path = Path(str(DB_PATH)).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(str(path), timeout=30, check_same_thread=False)
@@ -115,6 +108,7 @@ def db() -> sqlite3.Connection:
 
 
 def init_db() -> None:
+    """Create tables and insert default settings without overwriting custom values."""
     with db() as con:
         con.executescript(
             """
@@ -160,23 +154,32 @@ def init_db() -> None:
             """
         )
         defaults = {
-            "SOURCE1_NAME": "المصدر الأول", "SOURCE1_URL": "",
-            "SOURCE2_NAME": "المصدر الثاني", "SOURCE2_URL": "",
-            "ADD_NAME": "", "ADD_URL": "",
-            "PLAY_CREDIT_NAME": "", "PLAY_CREDIT_URL": "",
-            "PLAY_MUSIC_BUTTON_NAME": "", "PLAY_MUSIC_BUTTON_URL": "",
-            "PLAY_IMAGE_FILE_ID": "", "PLAY_IMAGE_TYPE": "photo",
+            "SOURCE1_NAME": "المصدر الأول",
+            "SOURCE1_URL": "",
+            "SOURCE2_NAME": "المصدر الثاني",
+            "SOURCE2_URL": "",
+            "ADD_NAME": "",
+            "ADD_URL": "",
+            "PLAY_CREDIT_NAME": "",
+            "PLAY_CREDIT_URL": "",
+            "PLAY_MUSIC_BUTTON_NAME": "",
+            "PLAY_MUSIC_BUTTON_URL": "",
+            "PLAY_IMAGE_FILE_ID": "",
+            "PLAY_IMAGE_TYPE": "photo",
             "CHAT_COMMANDS_BUTTON_NAME": "",
             "CHAT_COMMANDS_BUTTON_URL": "",
             "SUBS_ENABLED": "ON",
             "START_TEXT": "هذا البوت خاص بتشغيل الأغاني والفيديوهات",
-            "START_IMAGE_FILE_ID": "", "START_IMAGE_TYPE": "photo",
-            "CUSTOM_BTN1_NAME": "زر أول", "CUSTOM_BTN1_URL": "",
-            "CUSTOM_BTN2_NAME": "زر ثاني", "CUSTOM_BTN2_URL": "",
+            "START_IMAGE_FILE_ID": "",
+            "START_IMAGE_TYPE": "photo",
+            "CUSTOM_BTN1_NAME": "زر أول",
+            "CUSTOM_BTN1_URL": "",
+            "CUSTOM_BTN2_NAME": "زر ثاني",
+            "CUSTOM_BTN2_URL": "",
         }
-        con.executemany("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", defaults.items())
-        # Remove legacy/example values from earlier panel versions without touching
-        # values the owner has already customized.
+        con.executemany(
+            "INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", defaults.items()
+        )
         legacy_values = {
             "SOURCE1_NAME": "SG SOURCE",
             "SOURCE2_NAME": "Source Qatar",
@@ -184,8 +187,10 @@ def init_db() -> None:
             "PLAY_CREDIT_NAME": "MIKEY",
         }
         for key, value in legacy_values.items():
-            con.execute("UPDATE settings SET value='' WHERE key=? AND value=?", (key, value))
-
+            con.execute(
+                "UPDATE settings SET value='' WHERE key=? AND value=?",
+                (key, value),
+            )
 
 
 def setting_get(key: str) -> Optional[str]:
@@ -197,7 +202,8 @@ def setting_get(key: str) -> Optional[str]:
 def setting_set(key: str, value: str) -> None:
     with db() as con:
         con.execute(
-            "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            """INSERT INTO settings(key,value) VALUES(?,?)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
             (key, value),
         )
 
@@ -207,9 +213,17 @@ def save_user(user: Any) -> None:
         return
     with db() as con:
         con.execute(
-            """INSERT INTO users(user_id,first_name,username,created_at) VALUES(?,?,?,?)
-               ON CONFLICT(user_id) DO UPDATE SET first_name=excluded.first_name, username=excluded.username""",
-            (int(user.id), getattr(user, "first_name", "") or "", getattr(user, "username", "") or "", int(time.time())),
+            """INSERT INTO users(user_id,first_name,username,created_at)
+               VALUES(?,?,?,?)
+               ON CONFLICT(user_id) DO UPDATE SET
+                   first_name=excluded.first_name,
+                   username=excluded.username""",
+            (
+                int(user.id),
+                getattr(user, "first_name", "") or "",
+                getattr(user, "username", "") or "",
+                int(time.time()),
+            ),
         )
 
 
@@ -218,15 +232,25 @@ def save_chat(chat: Any) -> None:
         return
     with db() as con:
         con.execute(
-            """INSERT INTO chats(chat_id,title,chat_type,created_at) VALUES(?,?,?,?)
-               ON CONFLICT(chat_id) DO UPDATE SET title=excluded.title, chat_type=excluded.chat_type""",
-            (int(chat.id), getattr(chat, "title", "") or "", getattr(chat, "type", "") or "", int(time.time())),
+            """INSERT INTO chats(chat_id,title,chat_type,created_at)
+               VALUES(?,?,?,?)
+               ON CONFLICT(chat_id) DO UPDATE SET
+                   title=excluded.title,
+                   chat_type=excluded.chat_type""",
+            (
+                int(chat.id),
+                getattr(chat, "title", "") or "",
+                getattr(chat, "type", "") or "",
+                int(time.time()),
+            ),
         )
 
 
 def is_banned(user_id: int) -> bool:
     with db() as con:
-        return con.execute("SELECT 1 FROM banned WHERE user_id=?", (int(user_id),)).fetchone() is not None
+        return con.execute(
+            "SELECT 1 FROM banned WHERE user_id=?", (int(user_id),)
+        ).fetchone() is not None
 
 
 def ban_user(user_id: int) -> None:
@@ -241,12 +265,15 @@ def unban_user(user_id: int) -> None:
 
 def banned_ids() -> list[int]:
     with db() as con:
-        return [int(r[0]) for r in con.execute("SELECT user_id FROM banned ORDER BY user_id").fetchall()]
+        rows = con.execute("SELECT user_id FROM banned ORDER BY user_id").fetchall()
+    return [int(row[0]) for row in rows]
 
 
 def subscriptions() -> list[tuple]:
     with db() as con:
-        return con.execute("SELECT id,title,target,url,is_telegram FROM subscriptions ORDER BY id").fetchall()
+        return con.execute(
+            "SELECT id,title,target,url,is_telegram FROM subscriptions ORDER BY id"
+        ).fetchall()
 
 
 def classify_target(target: str) -> bool:
@@ -254,13 +281,19 @@ def classify_target(target: str) -> bool:
     return value.startswith("@") or value.lstrip("-").isdigit()
 
 
-def add_subscription(title: str, target: str, url: str, is_telegram: Optional[bool] = None) -> None:
+def add_subscription(
+    title: str, target: str, url: str, is_telegram: Optional[bool] = None
+) -> None:
     if is_telegram is None:
         is_telegram = classify_target(target)
     with db() as con:
         con.execute(
-            """INSERT INTO subscriptions(title,target,url,is_telegram) VALUES(?,?,?,?)
-               ON CONFLICT(target) DO UPDATE SET title=excluded.title,url=excluded.url,is_telegram=excluded.is_telegram""",
+            """INSERT INTO subscriptions(title,target,url,is_telegram)
+               VALUES(?,?,?,?)
+               ON CONFLICT(target) DO UPDATE SET
+                   title=excluded.title,
+                   url=excluded.url,
+                   is_telegram=excluded.is_telegram""",
             (title.strip(), target.strip(), url.strip(), int(is_telegram)),
         )
 
@@ -274,7 +307,9 @@ def is_admin(user_id: int, developer_id: int) -> bool:
     if int(user_id) == int(developer_id):
         return True
     with db() as con:
-        return con.execute("SELECT 1 FROM sudos WHERE user_id=?", (int(user_id),)).fetchone() is not None
+        return con.execute(
+            "SELECT 1 FROM sudos WHERE user_id=?", (int(user_id),)
+        ).fetchone() is not None
 
 
 def add_sudo(user_id: int, added_by: int) -> None:
@@ -313,7 +348,8 @@ def set_permission(user_id: int, permission: str, enabled: bool) -> None:
         raise ValueError(f"Unknown permission: {permission}")
     with db() as con:
         con.execute(
-            """INSERT INTO admin_permissions(user_id,permission,enabled) VALUES(?,?,?)
+            """INSERT INTO admin_permissions(user_id,permission,enabled)
+               VALUES(?,?,?)
                ON CONFLICT(user_id,permission) DO UPDATE SET enabled=excluded.enabled""",
             (int(user_id), key, int(bool(enabled))),
         )
@@ -322,7 +358,8 @@ def set_permission(user_id: int, permission: str, enabled: bool) -> None:
 def set_all_permissions(user_id: int, enabled: bool) -> None:
     with db() as con:
         con.executemany(
-            """INSERT INTO admin_permissions(user_id,permission,enabled) VALUES(?,?,?)
+            """INSERT INTO admin_permissions(user_id,permission,enabled)
+               VALUES(?,?,?)
                ON CONFLICT(user_id,permission) DO UPDATE SET enabled=excluded.enabled""",
             [(int(user_id), key, int(bool(enabled))) for key in PERMISSIONS],
         )
@@ -359,25 +396,42 @@ def has_permission(user_id: int, permission: str, developer_id: int) -> bool:
         ).fetchone()
     return bool(row and row[0])
 
-def get_permission_groups_state(user_id: int, developer_id: int) -> dict[str, dict[str, bool]]:
+
+def get_permission_groups_state(
+    user_id: int, developer_id: int
+) -> dict[str, dict[str, bool]]:
     state = get_permission_state(user_id, developer_id)
     return {
-        group: {f"{group}.{key}": state.get(f"{group}.{key}", False) for key in items}
+        group: {
+            f"{group}.{key}": state.get(f"{group}.{key}", False)
+            for key in items
+        }
         for group, items in PERMISSION_GROUPS.items()
     }
 
-def set_pending(user_id: int, mode: str, chat_id: Optional[int], message_id: Optional[int]) -> None:
+
+def set_pending(
+    user_id: int, mode: str, chat_id: Optional[int], message_id: Optional[int]
+) -> None:
     with db() as con:
         con.execute(
-            """INSERT INTO pending_inputs(user_id,mode,chat_id,message_id,created_at) VALUES(?,?,?,?,?)
-               ON CONFLICT(user_id) DO UPDATE SET mode=excluded.mode,chat_id=excluded.chat_id,message_id=excluded.message_id,created_at=excluded.created_at""",
+            """INSERT INTO pending_inputs(user_id,mode,chat_id,message_id,created_at)
+               VALUES(?,?,?,?,?)
+               ON CONFLICT(user_id) DO UPDATE SET
+                   mode=excluded.mode,
+                   chat_id=excluded.chat_id,
+                   message_id=excluded.message_id,
+                   created_at=excluded.created_at""",
             (int(user_id), mode, chat_id, message_id, int(time.time())),
         )
 
 
 def get_pending(user_id: int) -> Optional[tuple]:
     with db() as con:
-        return con.execute("SELECT mode,chat_id,message_id,created_at FROM pending_inputs WHERE user_id=?", (int(user_id),)).fetchone()
+        return con.execute(
+            "SELECT mode,chat_id,message_id,created_at FROM pending_inputs WHERE user_id=?",
+            (int(user_id),),
+        ).fetchone()
 
 
 def clear_pending(user_id: int) -> None:
@@ -393,15 +447,31 @@ def counts() -> tuple[int, int, int]:
     return int(users), int(chats), int(admins)
 
 
+def private_user_count() -> int:
+    """Compatibility helper for older panels.
+
+    The current schema does not record whether a user was seen in a private chat
+    or a group, so this returns the total number of distinct users in `users`.
+    It prevents imports from failing but is not a true private-chat-only count.
+    """
+    with db() as con:
+        row = con.execute("SELECT COUNT(*) FROM users").fetchone()
+    return int(row[0]) if row else 0
+
 
 def chat_ids_by_type(chat_types: tuple[str, ...] | list[str]) -> list[int]:
-    placeholders=",".join("?" for _ in chat_types)
-    if not placeholders:
+    if not chat_types:
         return []
+    placeholders = ",".join("?" for _ in chat_types)
     with db() as con:
-        rows=con.execute(f"SELECT chat_id FROM chats WHERE chat_type IN ({placeholders}) ORDER BY chat_id", tuple(chat_types)).fetchall()
-    return [int(r[0]) for r in rows]
+        rows = con.execute(
+            f"SELECT chat_id FROM chats WHERE chat_type IN ({placeholders}) ORDER BY chat_id",
+            tuple(chat_types),
+        ).fetchall()
+    return [int(row[0]) for row in rows]
+
 
 def user_ids() -> list[int]:
     with db() as con:
-        return [int(r[0]) for r in con.execute("SELECT user_id FROM users").fetchall()]
+        rows = con.execute("SELECT user_id FROM users ORDER BY user_id").fetchall()
+    return [int(row[0]) for row in rows]
