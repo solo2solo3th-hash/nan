@@ -792,7 +792,6 @@ def _handle_callback_impl(bot, call):
         begin_playback_input(bot, call, "chat_cmd_button", "💬 أرسل بالصيغة: <code>اسم الزر : الرابط</code>")
         return True
     if data == "chat_cmd_button_clear":
-        from database import setting_set
         setting_set("CHAT_COMMANDS_BUTTON_NAME", "")
         setting_set("CHAT_COMMANDS_BUTTON_URL", "")
         bot.answer_callback_query(call.id, "✅ تم حذف زر أوامر الشات.")
