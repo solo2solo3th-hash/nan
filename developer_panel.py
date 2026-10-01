@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from telebot import types
 
 from config import DEVELOPER_ID
@@ -26,6 +27,8 @@ from database import (
     setting_set,
     subscriptions,
 )
+
+log = logging.getLogger(__name__)
 
 DEV_IDS = {int(DEVELOPER_ID)}
 
@@ -726,8 +729,8 @@ def _back_to_main(bot, call):
     )
 
 
-def handle_callback(bot, call):
-    """Return True when this developer-panel callback was consumed."""
+def _handle_callback_impl(bot, call):
+    """Internal callback dispatcher; returns True when consumed."""
     if not is_developer(call.from_user.id):
         if (call.data or "").startswith(("dev_", "admin_", "bc_", "toggle_perm:", "fs_", "set_fs_", "back_to_main", "close_menu")):
             bot.answer_callback_query(call.id, "⛔ هذه اللوحة خاصة بالمطور.", show_alert=True)
@@ -958,6 +961,23 @@ def handle_callback(bot, call):
         return True
 
     return False
+
+
+def handle_callback(bot, call):
+    """Dispatch developer callbacks and surface/log unexpected errors."""
+    try:
+        return _handle_callback_impl(bot, call)
+    except Exception:
+        log.exception("Developer panel callback failed: %s", getattr(call, "data", None))
+        try:
+            bot.answer_callback_query(
+                call.id,
+                "❌ تعذر تنفيذ الزر. راجع سجل Railway.",
+                show_alert=True,
+            )
+        except Exception:
+            pass
+        return True
 
 
 def handle_input(bot, message):
