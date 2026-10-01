@@ -11,6 +11,8 @@ from database import (
     add_sudo,
     add_subscription,
     counts,
+    chat_ids_by_type,
+    private_user_count,
     delete_subscription,
     get_permission_state,
     get_pending,
@@ -156,27 +158,37 @@ def broadcast_markup():
     return m
 
 
-def _counts():
+def _stats_counts():
+    """Return dashboard counts by actual chat type, not generic DB row totals."""
     try:
-        result = counts()
-        if isinstance(result, dict):
-            return {
-                "users": int(result.get("users", 0)),
-                "chats": int(result.get("chats", 0)),
-                "admins": int(result.get("admins", len(list_sudos()))),
-            }
-        users, chats, admins = result
-        return {"users": int(users), "chats": int(chats), "admins": int(admins)}
+        channel_count = len(chat_ids_by_type(("channel",)))
+        group_count = len(chat_ids_by_type(("group", "supergroup")))
+        private_count = int(private_user_count())
+        stored_admins = int(counts()[2])
+        admins = stored_admins + (1 if int(DEVELOPER_ID) else 0)
+        return {
+            "channels": channel_count,
+            "groups": group_count,
+            "private": private_count,
+            "admins": admins,
+        }
     except Exception:
-        return {"users": 0, "chats": 0, "admins": len(list_sudos())}
+        return {
+            "channels": 0,
+            "groups": 0,
+            "private": 0,
+            "admins": 1 if int(DEVELOPER_ID) else 0,
+        }
 
 
-def statistics_text():
-    s = _counts()
+def statistics_text(bot=None):
+    s = _stats_counts()
     return (
         "📊 <b>إحصائيات البوت:</b>\n\n"
-        f"👤 المستخدمون المسجلون: <code>{s['users']}</code>\n"
-        f"💬 المحادثات المسجلة: <code>{s['chats']}</code>\n"
+        f"📢 عدد القنوات: <code>{s['channels']}</code>\n"
+        f"👥 عدد الكروبات: <code>{s['groups']}</code>\n"
+        f"💬 عدد الخاص (/start): <code>{s['private']}</code>\n"
+        f"👤 مستخدمو البوت من الخاص: <code>{s['private']}</code>\n"
         f"🛡️ عدد المشرفين: <code>{s['admins']}</code>"
     )
 
@@ -186,10 +198,9 @@ def show_statistics(bot, call):
     m.add(types.InlineKeyboardButton("🔄 تحديث الإحصائيات", callback_data="dev_stats"))
     m.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
     bot.edit_message_text(
-        statistics_text(), call.message.chat.id, call.message.message_id,
+        statistics_text(bot), call.message.chat.id, call.message.message_id,
         reply_markup=m, parse_mode="HTML"
     )
-
 
 def show_broadcast_menu(bot, call):
     bot.edit_message_text(
@@ -570,19 +581,22 @@ def playback_settings_markup():
     m.add(types.InlineKeyboardButton("🎵 زر الموسيقى: الاسم + الرابط", callback_data="play_music_pair"))
     m.add(types.InlineKeyboardButton("🖼️ صورة لوحة التشغيل", callback_data="play_set_image"))
     m.add(types.InlineKeyboardButton("🎨 ألوان أزرار لوحة التشغيل", callback_data="play_button_colors"))
+    m.add(types.InlineKeyboardButton("📝 أسماء أزرار التشغيل", callback_data="play_button_labels"))
     m.add(types.InlineKeyboardButton("🎵 أغنية الجات", callback_data="jat_audio_menu"))
     m.add(types.InlineKeyboardButton("↩️ رجوع", callback_data="back_to_main"))
     return m
 
 
 _PLAYBACK_BUTTON_LABELS = {
-    "pause": "⏸️ إيقاف مؤقت",
-    "resume": "▶️ استئناف",
     "skip": "⏭️ تخطي",
     "stop": "⏹️ إنهاء",
-    "queue": "📋 القائمة",
-    "add": "➕ إضافة",
-    "custom": "🔗 الزر المخصص",
+    "pause": "⏸️ إيقاف مؤقت",
+    "rewind": "⏪ ترجيع 10 ثوانٍ",
+    "resume": "▶️ استئناف",
+    "forward": "⏩ تقديم 10 ثوانٍ",
+    "custom1": "🔗 الزر المخصص الأول",
+    "custom2": "🔗 الزر المخصص الثاني",
+    "top": "🔝 زر الأعلى",
 }
 
 _PLAYBACK_COLOR_LABELS = {
@@ -781,10 +795,21 @@ def handle_callback(bot, call):
         bot.answer_callback_query(call.id, "✅ تم حذف زر أوامر الشات.")
         show_chat_commands(bot, call)
         return True
+    if data == "play_button_labels":
+        bot.answer_callback_query(call.id)
+        begin_playback_input(
+            bot, call, "play_button_labels",
+            "📝 أرسل أسماء الأزرار السبعة بهذا الترتيب، وافصل بينها بعلامة |\n"
+            "1 تخطي | 2 إنهاء | 3 إيقاف | 4 ترجيع 10 ثوانٍ | 5 تشغيل/استئناف | 6 تقديم 10 ثوانٍ | 7 الأعلى\n\n"
+            "مثال: ⏭️ تخطي | ⏹️ إنهاء | ⏸️ إيقاف | -10s | ▶️ | +10s | 🔝\n"
+            "لإرجاع اسم افتراضي اكتب DEFAULT مكانه. الحد الأقصى 64 حرفاً لكل اسم."
+        )
+        return True
+
     if data == "play_button_colors":
         bot.answer_callback_query(call.id)
         bot.edit_message_text(
-            "🎨 <b>ألوان أزرار لوحة التشغيل</b>\n\nاختر الزر حتى تحدد لونه:",
+            "🎨 <b>ألوان أزرار لوحة التشغيل</b>\n\nاختر الزر ثم اللون. ألوان Telegram هي أنماط دلالية (أزرق/أخضر/أحمر) وتظهر حسب دعم تطبيق Telegram؛ لا يمكن فرض لون مخصص أو ضمانه على كل الأجهزة.",
             call.message.chat.id, call.message.message_id,
             reply_markup=playback_button_colors_markup(), parse_mode="HTML"
         )
@@ -809,7 +834,7 @@ def handle_callback(bot, call):
         setting_set(f"PLAY_BTN_COLOR_{key.upper()}", color)
         bot.answer_callback_query(call.id, f"تم اختيار {_PLAYBACK_COLOR_LABELS[color]}")
         bot.edit_message_text(
-            "🎨 <b>ألوان أزرار لوحة التشغيل</b>\n\nاختر الزر حتى تحدد لونه:",
+            "🎨 <b>ألوان أزرار لوحة التشغيل</b>\n\nاختر الزر ثم اللون. ألوان Telegram هي أنماط دلالية (أزرق/أخضر/أحمر) وتظهر حسب دعم تطبيق Telegram؛ لا يمكن فرض لون مخصص أو ضمانه على كل الأجهزة.",
             call.message.chat.id, call.message.message_id,
             reply_markup=playback_button_colors_markup(), parse_mode="HTML"
         )
@@ -819,7 +844,7 @@ def handle_callback(bot, call):
             setting_set(f"PLAY_BTN_COLOR_{key.upper()}", "default")
         bot.answer_callback_query(call.id, "✅ رجعت كل الألوان للوضع الافتراضي.")
         bot.edit_message_text(
-            "🎨 <b>ألوان أزرار لوحة التشغيل</b>\n\nاختر الزر حتى تحدد لونه:",
+            "🎨 <b>ألوان أزرار لوحة التشغيل</b>\n\nاختر الزر ثم اللون. ألوان Telegram هي أنماط دلالية (أزرق/أخضر/أحمر) وتظهر حسب دعم تطبيق Telegram؛ لا يمكن فرض لون مخصص أو ضمانه على كل الأجهزة.",
             call.message.chat.id, call.message.message_id,
             reply_markup=playback_button_colors_markup(), parse_mode="HTML"
         )
@@ -947,6 +972,23 @@ def handle_input(bot, message):
         return remove_admin_from_message(bot, message)
     if state == "waiting_fs_channel":
         return add_forced_channel_from_message(bot, message)
+
+    if state == "play_button_labels":
+        raw = (message.text or "").strip()
+        parts = [part.strip() for part in raw.split("|")]
+        keys = ("SKIP", "STOP", "PAUSE", "REWIND", "RESUME", "FORWARD", "TOP")
+        defaults = ("⏭️ تخطي", "⏹️ إنهاء", "⏸️ إيقاف", "-10s", "▶️", "+10s", "🔝")
+        if len(parts) != len(keys) or any(not part for part in parts):
+            bot.reply_to(message, "❌ لازم ترسل 7 أسماء بالترتيب وتفصل بينها بعلامة |.")
+            return True
+        if any(len(part) > 64 for part in parts):
+            bot.reply_to(message, "❌ كل اسم زر يجب ألا يتجاوز 64 حرفاً.")
+            return True
+        for key, value, default in zip(keys, parts, defaults):
+            setting_set(f"PLAY_BTN_LABEL_{key}", "" if value.upper() == "DEFAULT" else value)
+        pending_input_set(message.from_user.id, None)
+        bot.reply_to(message, "✅ تم تحديث أسماء أزرار لوحة التشغيل.")
+        return True
 
     if state in {"play_credit_pair", "play_music_pair", "chat_cmd_button", "jat_audio_button", "jat_audio_credit"}:
         text = (message.text or "").strip()
