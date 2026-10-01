@@ -9,9 +9,15 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
+import shutil
+import subprocess
+import tempfile
 import threading
+import time
 from concurrent.futures import Future
 from typing import Any, Awaitable, Callable
+from pathlib import Path
 
 from pyrogram import Client
 
@@ -46,6 +52,9 @@ class VoiceCallRunner:
         self._stream_end_handler: Callable[[int], Awaitable[None] | None] | None = None
         self._state_lock = threading.RLock()
         self._start_lock = threading.Lock()
+        # Playback bookkeeping is used only for safe relative seeking.
+        self._playback_state: dict[int, dict[str, Any]] = {}
+        self._seek_tempfiles: dict[int, str] = {}
 
     def set_stream_end_handler(self, handler: Callable[[int], Awaitable[None] | None]) -> None:
         self._stream_end_handler = handler
@@ -267,6 +276,58 @@ class VoiceCallRunner:
             future.cancel()
             return None
 
+    async def aensure_assistant_in_chat(self, chat_id: int) -> bool:
+        """Ensure the assistant user account is a member of the target chat.
+
+        For public groups/channels Pyrogram can join directly. For private chats
+        Telegram requires a usable invite link or prior membership, so failure
+        is reported instead of pretending the assistant joined.
+        """
+        self._ensure_ready()
+        assistant = self.assistant
+        if assistant is None:
+            raise RuntimeError("Assistant session is not available")
+
+        chat_id = int(chat_id)
+        me = await assistant.get_me()
+        try:
+            member = await assistant.get_chat_member(chat_id, me.id)
+            status = str(getattr(member, "status", "")).lower()
+            if status not in {"left", "kicked", "banned"}:
+                if status != "restricted" or bool(getattr(member, "is_member", False)):
+                    return True
+        except Exception as exc:
+            log.info("Assistant membership lookup failed for %s; attempting auto-join: %s", chat_id, exc)
+
+        chat = await assistant.get_chat(chat_id)
+        username = getattr(chat, "username", None)
+        invite_link = getattr(chat, "invite_link", None)
+        join_target = f"@{username}" if username else invite_link
+        if not join_target:
+            raise RuntimeError(
+                "Assistant is not a member of this chat and Telegram did not provide "
+                "a public username or invite link for automatic joining"
+            )
+
+        await assistant.join_chat(join_target)
+        return True
+
+    def ensure_assistant_in_chat(self, chat_id: int) -> bool:
+        """Thread-safe wrapper that auto-joins the assistant before playback."""
+        self._ensure_ready()
+        loop = self.loop
+        if loop is None or loop.is_closed() or not loop.is_running():
+            raise RuntimeError("Voice runtime is not ready (event loop is closed or stopped)")
+        future = asyncio.run_coroutine_threadsafe(
+            self.aensure_assistant_in_chat(int(chat_id)),
+            loop,
+        )
+        try:
+            return bool(future.result(timeout=30))
+        except Exception:
+            future.cancel()
+            raise
+
     def assistant_blocked(self, chat_id: int) -> bool:
         """Return True only when Telegram explicitly reports the assistant banned."""
         return self.assistant_status(chat_id) in {"banned", "kicked"}
@@ -289,17 +350,131 @@ class VoiceCallRunner:
             future.cancel()
             return False
 
+    def _cleanup_seek_file(self, chat_id: int) -> None:
+        old = self._seek_tempfiles.pop(int(chat_id), None)
+        if old:
+            try:
+                os.unlink(old)
+            except OSError:
+                pass
+
     def play(self, chat_id: int, stream: Any) -> Any:
-        return self.call("play", int(chat_id), stream)
+        # The assistant must be a member of the target chat before PyTgCalls
+        # can enter its voice chat. Keep all MTProto work on the runtime thread.
+        chat_id = int(chat_id)
+        self.ensure_assistant_in_chat(chat_id)
+        result = self.call("play", chat_id, stream)
+        # Normal track starts reset seek position. Seek itself calls self.call
+        # directly and then updates this state, so it won't reset the offset.
+        if isinstance(stream, (str, os.PathLike)):
+            self._cleanup_seek_file(chat_id)
+            self._playback_state[chat_id] = {
+                "path": str(Path(stream).resolve()),
+                "offset": 0.0,
+                "started_at": time.monotonic(),
+                "paused": False,
+                "paused_at": None,
+            }
+        return result
 
     def pause(self, chat_id: int) -> Any:
-        return self.call("pause", int(chat_id))
+        chat_id = int(chat_id)
+        result = self.call("pause", chat_id)
+        state = self._playback_state.get(chat_id)
+        if state and not state.get("paused"):
+            state["offset"] = self._current_position(state)
+            state["paused"] = True
+            state["paused_at"] = time.monotonic()
+        return result
 
     def resume(self, chat_id: int) -> Any:
-        return self.call("resume", int(chat_id))
+        chat_id = int(chat_id)
+        result = self.call("resume", chat_id)
+        state = self._playback_state.get(chat_id)
+        if state and state.get("paused"):
+            state["started_at"] = time.monotonic()
+            state["paused"] = False
+            state["paused_at"] = None
+        return result
+
+    @staticmethod
+    def _current_position(state: dict[str, Any]) -> float:
+        offset = float(state.get("offset", 0.0))
+        if state.get("paused"):
+            return offset
+        started = state.get("started_at")
+        return offset + (max(0.0, time.monotonic() - started) if started else 0.0)
+
+    def seek(self, chat_id: int, delta_seconds: int, duration: int | float | None = None) -> float:
+        """Seek relative to the current position by rebuilding the remaining audio.
+
+        PyTgCalls 2.x doesn't expose a portable seek API for a plain local path.
+        FFmpeg creates a temporary remainder file; the original Track path stays
+        in the state so repeated forward/backward seeks remain relative to it.
+        """
+        chat_id = int(chat_id)
+        state = self._playback_state.get(chat_id)
+        if not state or not state.get("path"):
+            raise RuntimeError("لا توجد أغنية قابلة للتقديم أو الترجيع حالياً")
+        original = Path(state["path"])
+        if not original.is_file():
+            raise RuntimeError("ملف الأغنية الحالية غير موجود")
+        current = self._current_position(state)
+        limit = max(0.0, float(duration or 0))
+        target = max(0.0, current + int(delta_seconds))
+        if limit > 0:
+            target = min(target, max(0.0, limit - 1.0))
+        if abs(target - current) < 0.5:
+            return target
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            raise RuntimeError("FFmpeg غير مثبت أو غير موجود في PATH")
+
+        fd, temp_path = tempfile.mkstemp(prefix=f"tgseek_{chat_id}_", suffix=".mp3")
+        os.close(fd)
+        command = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                   "-ss", f"{target:.3f}", "-i", str(original), "-vn",
+                   "-codec:a", "libmp3lame", "-b:a", "192k", temp_path]
+        try:
+            proc = subprocess.run(command, capture_output=True, text=True,
+                                  timeout=60, check=False)
+            if proc.returncode != 0 or not os.path.isfile(temp_path) or os.path.getsize(temp_path) <= 0:
+                detail = (proc.stderr or "").strip()[-800:]
+                raise RuntimeError("FFmpeg فشل في تجهيز موضع التشغيل" + (f": {detail}" if detail else ""))
+            was_paused = bool(state.get("paused"))
+            # Replace the active stream on PyTgCalls' owning event loop.
+            self.call("play", chat_id, temp_path)
+            old_temp = self._seek_tempfiles.get(chat_id)
+            self._seek_tempfiles[chat_id] = temp_path
+            if old_temp and old_temp != temp_path:
+                try:
+                    os.unlink(old_temp)
+                except OSError:
+                    pass
+            self._playback_state[chat_id] = {
+                "path": str(original), "offset": target,
+                "started_at": time.monotonic(), "paused": False,
+                "paused_at": None,
+            }
+            if was_paused:
+                self.call("pause", chat_id)
+                self._playback_state[chat_id]["paused"] = True
+                self._playback_state[chat_id]["offset"] = target
+                self._playback_state[chat_id]["paused_at"] = time.monotonic()
+            return target
+        except Exception:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+            raise
 
     def leave(self, chat_id: int) -> Any:
-        return self.call("leave_call", int(chat_id))
+        chat_id = int(chat_id)
+        result = self.call("leave_call", chat_id)
+        self._playback_state.pop(chat_id, None)
+        self._cleanup_seek_file(chat_id)
+        return result
 
     def volume(self, chat_id: int, value: int) -> Any:
         return self.call("change_volume_call", int(chat_id), int(value))
