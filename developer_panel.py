@@ -1160,44 +1160,65 @@ def handle_input(bot, message):
 
     if state == "waiting_assistant_code":
         code = (message.text or "").strip()
+        # A phone number sent while we are waiting for the code must not
+        # restart the login flow or trigger another Telegram code.
+        if code.startswith("+"):
+            bot.reply_to(
+                message,
+                "⚠️ الكود انرسل بالفعل. لا تعيد إرسال رقم الهاتف هنا؛ أرسل رمز Telegram فقط. "
+                "إذا تريد البدء من جديد اضغط رجوع ثم «إضافة مساعد»."
+            )
+            return True
+        if not code or not code.replace(" ", "").isdigit():
+            bot.reply_to(message, "❌ أرسل رمز Telegram الرقمي فقط. بقيت عملية التسجيل الحالية فعالة.")
+            return True
         try:
+            session = complete_login(message.from_user.id, code=code)
             try:
                 bot.delete_message(message.chat.id, message.message_id)
             except Exception:
                 pass
-            session = complete_login(message.from_user.id, code=code)
             if session is None:
                 pending_input_set(message.from_user.id, "waiting_assistant_password")
                 bot.reply_to(message, "🔐 الحساب عليه تحقق بخطوتين. أرسل كلمة مرور التحقق هنا خلال 10 دقائق.")
                 return True
-            slot = _ASSISTANT_POOL.available_slots()[0]
+            available = _ASSISTANT_POOL.available_slots() if _ASSISTANT_POOL else []
+            if not available:
+                raise RuntimeError("لا توجد خانة فارغة للمساعدين.")
+            slot = available[0]
             _ASSISTANT_POOL.add_session(slot, session)
             pending_input_set(message.from_user.id, None)
             bot.reply_to(message, f"✅ تمت إضافة الحساب كمساعد {slot}. افتح لوحة المساعدين لتحديده أو تعيينه لمجموعة.")
         except Exception as exc:
-            pending_input_set(message.from_user.id, None)
-            cancel_login(message.from_user.id)
-            bot.reply_to(message, f"❌ فشل تسجيل الدخول أو حفظ الحساب: {exc}\nابدأ العملية من جديد.")
+            # Keep the flow alive for a mistyped code; the user can try again
+            # without having to request another code or start from scratch.
+            log.warning("Assistant login code step failed for developer %s: %s", message.from_user.id, type(exc).__name__)
+            bot.reply_to(message, "❌ لم يتم قبول الرمز أو تعذّر إكمال الخطوة. تأكد من الرمز وأعد إرساله، أو اضغط رجوع ثم ابدأ إضافة المساعد من جديد.")
         return True
 
     if state == "waiting_assistant_password":
         password = (message.text or "").strip()
         try:
+            if not password:
+                bot.reply_to(message, "❌ أرسل كلمة مرور التحقق بخطوتين.")
+                return True
+            session = complete_login(message.from_user.id, password=password)
             try:
                 bot.delete_message(message.chat.id, message.message_id)
             except Exception:
                 pass
-            session = complete_login(message.from_user.id, password=password)
             if not session:
                 raise RuntimeError("لم يتم إنشاء جلسة بعد.")
-            slot = _ASSISTANT_POOL.available_slots()[0]
+            available = _ASSISTANT_POOL.available_slots() if _ASSISTANT_POOL else []
+            if not available:
+                raise RuntimeError("لا توجد خانة فارغة للمساعدين.")
+            slot = available[0]
             _ASSISTANT_POOL.add_session(slot, session)
             pending_input_set(message.from_user.id, None)
             bot.reply_to(message, f"✅ تمت إضافة الحساب كمساعد {slot}.")
         except Exception as exc:
-            pending_input_set(message.from_user.id, None)
-            cancel_login(message.from_user.id)
-            bot.reply_to(message, f"❌ فشل التحقق أو حفظ الحساب: {exc}\nابدأ العملية من جديد.")
+            log.warning("Assistant login password step failed for developer %s: %s", message.from_user.id, type(exc).__name__)
+            bot.reply_to(message, "❌ لم يتم قبول كلمة المرور أو تعذّر إكمال الخطوة. أعد إدخال كلمة المرور، أو اضغط رجوع وابدأ من جديد.")
         return True
 
     if state in {"waiting_assistant_chat_id", "waiting_assistant_unassign_chat_id"}:
