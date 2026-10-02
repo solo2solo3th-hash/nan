@@ -21,12 +21,21 @@ class AssistantPool:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._sessions: dict[int, str] = {}
+        seen_sessions: set[str] = set()
         for slot in range(1, 6):
             value = os.getenv(f"ASSISTANT_SESSION_{slot}", "").strip()
             if slot == 1 and not value:
                 value = SESSION_STRING.strip()
-            if value:
-                self._sessions[slot] = value
+            if not value:
+                continue
+            # One authorization key must never be run by two Pyrogram clients.
+            if value in seen_sessions:
+                raise ValueError(
+                    f"جلسة تيليجرام مكررة في إعدادات المساعدين (الخانة {slot}). "
+                    "خصص جلسة مختلفة لكل حساب."
+                )
+            seen_sessions.add(value)
+            self._sessions[slot] = value
 
         requested = os.getenv("ACTIVE_ASSISTANT", "1").strip()
         try:
@@ -173,8 +182,8 @@ class AssistantPool:
             if slot != self._selected:
                 import logging
                 logging.getLogger(__name__).warning(
-                    "Assistant slot %s failed to start; other assistants remain available: %s",
-                    slot, exc,
+                    "Assistant slot %s failed to start (%s); other assistants remain available.",
+                    slot, type(exc).__name__,
                 )
 
     def stop(self) -> None:
