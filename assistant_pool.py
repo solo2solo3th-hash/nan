@@ -246,10 +246,18 @@ class AssistantPool:
             # default must not interrupt music already playing in other chats.
 
     def assign_chat(self, chat_id: int, slot: int) -> None:
+        """Persist a group assignment and make the assistant join that group."""
         chat_id, slot = int(chat_id), int(slot)
         with self._lock:
-            if slot not in self._runners:
+            runner = self._runners.get(slot)
+            if runner is None:
                 raise ValueError(f"المساعد {slot} غير مضبوط في متغيرات Railway.")
+            if not self._started:
+                raise RuntimeError("نظام المساعدين غير شغّال حالياً؛ أعد المحاولة بعد جاهزية البوت.")
+
+            # Join Telegram group membership immediately when assigning it.
+            # Private groups still require a usable invite link and permission.
+            runner.ensure_assistant_in_chat(chat_id)
             self._chat_assignments[chat_id] = slot
             setting_set(
                 "ASSISTANT_CHAT_ASSIGNMENTS",
