@@ -174,26 +174,37 @@ class VoiceCallRunner:
             else:
                 log.exception("Voice runtime failed")
         finally:
-            # Stop PyTgCalls and the assistant on their owning event-loop thread.
+            # Stop PyTgCalls only if this installed version supports stop().
             try:
-                if self.calls is not None and not loop.is_closed():
-                    result = self.calls.stop()
+                calls = self.calls
+                stop_method = getattr(calls, "stop", None) if calls is not None else None
+                if callable(stop_method) and not loop.is_closed():
+                    result = stop_method()
                     if inspect.isawaitable(result):
                         loop.run_until_complete(result)
             except BaseException:
-                log.exception("PyTgCalls stop failed")
+                log.exception("PyTgCalls cleanup failed")
+
+            # Stop the assistant on its owning event-loop thread.
             try:
-                if self.assistant is not None and self.assistant.is_connected and not loop.is_closed():
-                    result = self.assistant.stop()
+                assistant = self.assistant
+                if (
+                    assistant is not None
+                    and assistant.is_connected
+                    and not loop.is_closed()
+                ):
+                    result = assistant.stop()
                     if inspect.isawaitable(result):
                         loop.run_until_complete(result)
             except BaseException:
                 log.exception("Pyrogram stop failed")
+
             try:
                 if not loop.is_closed():
                     loop.close()
             except BaseException:
                 log.exception("Event loop close failed")
+
             asyncio.set_event_loop(None)
             with self._state_lock:
                 self.loop = None
@@ -201,7 +212,11 @@ class VoiceCallRunner:
                 self.assistant = None
                 # On startup failure, keep the event set so start() wakes and
                 # raises the actual error instead of hanging until timeout.
-                if startup_succeeded and self.error is None and self._fatal_auth_error is None:
+                if (
+                    startup_succeeded
+                    and self.error is None
+                    and self._fatal_auth_error is None
+                ):
                     self.ready.clear()
                 else:
                     self.ready.set()
@@ -299,7 +314,11 @@ class VoiceCallRunner:
                 if status != "restricted" or bool(getattr(member, "is_member", False)):
                     return True
         except Exception as exc:
-            log.info("Assistant membership lookup failed for %s; attempting auto-join: %s", chat_id, exc)
+            log.info(
+                "Assistant membership lookup failed for %s; attempting auto-join: %s",
+                chat_id,
+                exc,
+            )
 
         chat = await assistant.get_chat(chat_id)
         username = getattr(chat, "username", None)
@@ -331,14 +350,18 @@ class VoiceCallRunner:
         return self.assistant_status(chat_id) in {"banned", "kicked"}
 
     async def aassistant_present(self, chat_id: int) -> bool:
-        return (await self.aassistant_status(chat_id)) not in {None, "left", "kicked", "banned"}
+        return (await self.aassistant_status(chat_id)) not in {
+            None, "left", "kicked", "banned"
+        }
 
     def assistant_present(self, chat_id: int) -> bool:
         self._ensure_ready()
         loop = self.loop
         if loop is None or loop.is_closed() or not loop.is_running():
             return False
-        future = asyncio.run_coroutine_threadsafe(self.aassistant_present(int(chat_id)), loop)
+        future = asyncio.run_coroutine_threadsafe(
+            self.aassistant_present(int(chat_id)), loop
+        )
         try:
             return bool(future.result(timeout=20))
         except Exception:
@@ -360,8 +383,11 @@ class VoiceCallRunner:
         if isinstance(stream, (str, os.PathLike)):
             self._cleanup_seek_file(chat_id)
             self._playback_state[chat_id] = {
-                "path": str(Path(stream).resolve()), "offset": 0.0,
-                "started_at": time.monotonic(), "paused": False, "paused_at": None,
+                "path": str(Path(stream).resolve()),
+                "offset": 0.0,
+                "started_at": time.monotonic(),
+                "paused": False,
+                "paused_at": None,
             }
         return result
 
@@ -393,7 +419,12 @@ class VoiceCallRunner:
         started = state.get("started_at")
         return offset + (max(0.0, time.monotonic() - started) if started else 0.0)
 
-    def seek(self, chat_id: int, delta_seconds: int, duration: int | float | None = None) -> float:
+    def seek(
+        self,
+        chat_id: int,
+        delta_seconds: int,
+        duration: int | float | None = None,
+    ) -> float:
         chat_id = int(chat_id)
         state = self._playback_state.get(chat_id)
         if not state or not state.get("path"):
@@ -411,7 +442,10 @@ class VoiceCallRunner:
         ffmpeg = shutil.which("ffmpeg")
         if not ffmpeg:
             raise RuntimeError("FFmpeg غير مثبت أو غير موجود في PATH")
-        fd, temp_path = tempfile.mkstemp(prefix=f"tgseek_{chat_id}_", suffix=".mp3")
+        fd, temp_path = tempfile.mkstemp(
+            prefix=f"tgseek_{chat_id}_",
+            suffix=".mp3",
+        )
         os.close(fd)
         command = [
             ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
@@ -419,10 +453,23 @@ class VoiceCallRunner:
             "-codec:a", "libmp3lame", "-b:a", "192k", temp_path,
         ]
         try:
-            proc = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
-            if proc.returncode != 0 or not os.path.isfile(temp_path) or os.path.getsize(temp_path) <= 0:
+            proc = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+            if (
+                proc.returncode != 0
+                or not os.path.isfile(temp_path)
+                or os.path.getsize(temp_path) <= 0
+            ):
                 detail = (proc.stderr or "").strip()[-800:]
-                raise RuntimeError("FFmpeg فشل في تجهيز موضع التشغيل" + (f": {detail}" if detail else ""))
+                raise RuntimeError(
+                    "FFmpeg فشل في تجهيز موضع التشغيل"
+                    + (f": {detail}" if detail else "")
+                )
             was_paused = bool(state.get("paused"))
             self.call("play", chat_id, temp_path)
             old_temp = self._seek_tempfiles.get(chat_id)
@@ -433,8 +480,11 @@ class VoiceCallRunner:
                 except OSError:
                     pass
             self._playback_state[chat_id] = {
-                "path": str(original), "offset": target, "started_at": time.monotonic(),
-                "paused": False, "paused_at": None,
+                "path": str(original),
+                "offset": target,
+                "started_at": time.monotonic(),
+                "paused": False,
+                "paused_at": None,
             }
             if was_paused:
                 self.call("pause", chat_id)
