@@ -44,6 +44,10 @@ def _is_auth_key_duplicated(exc: BaseException) -> bool:
 
 class VoiceCallRunner:
     def __init__(self, session_string: str | None = None) -> None:
+        # Keep each runner bound to its own Telegram account session.
+        self.session_string = (session_string if session_string is not None else SESSION_STRING).strip()
+        if not self.session_string:
+            raise ValueError("Assistant session string is empty; configure a session before starting.")
         self.assistant: Client | None = None
         self.calls: PyTgCalls | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
