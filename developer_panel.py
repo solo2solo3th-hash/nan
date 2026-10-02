@@ -6,6 +6,7 @@ import logging
 from telebot import types
 
 from config import DEVELOPER_ID
+from assistant_login import begin_login, complete_login, cancel_login
 from database import (
     PERMISSION_GROUPS,
     PERMISSIONS,
@@ -234,16 +235,21 @@ def show_assistants_menu(bot, call):
                 label = f"✅ المساعد {slot} (المحدد)" if item["selected"] else f"🔀 اختيار المساعد {slot}"
                 markup.add(types.InlineKeyboardButton(label, callback_data=f"dev_assistant_select:{slot}"))
     if _ASSISTANT_POOL is not None:
+        if _ASSISTANT_POOL.available_slots():
+            markup.add(types.InlineKeyboardButton("➕ إضافة حساب مساعد", callback_data="dev_assistant_add"))
+        removable = [item for item in _ASSISTANT_POOL.slots_status() if item["configured"]]
+        if removable:
+            markup.add(types.InlineKeyboardButton("➖ حذف حساب مساعد", callback_data="dev_assistant_remove"))
         markup.add(types.InlineKeyboardButton("🎯 تعيين مساعد لمجموعة", callback_data="dev_assistant_assign_chat"))
         markup.add(types.InlineKeyboardButton("🧹 إلغاء تعيين مجموعة", callback_data="dev_assistant_unassign_chat"))
     markup.add(types.InlineKeyboardButton("🔄 تحديث الحالة", callback_data="dev_assistants"))
     markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
     lines.extend([
         "",
-        "🔐 الجلسات لا تظهر هنا. الحسابات المهيأة حالياً تُقرأ من متغيرات Railway.",
+        "🔐 الجلسات المخزنة من اللوحة مشفّرة في SQLite، ولا تُعرض داخل اللوحة.",
         "المساعد المحدد هو الافتراضي، ويمكن تعيين مساعد مستقل لكل مجموعة؛ التعيينات محفوظة في SQLite.",
-        "لإضافة جلسة أخرى في هذه النسخة، أضف ASSISTANT_SESSION_2 وما بعده في Railway ثم أعد تشغيل الخدمة.",
-        "⚠️ تسجيل حساب جديد برقم الهاتف وكود التحقق من داخل البوت غير منفّذ بعد؛ لا ترسل أكواد الدخول أو الجلسات في الرسائل.",
+        "حسابات Railway ثابتة من اللوحة؛ الحسابات المضافة من هنا يمكن حذفها وإدارتها.",
+        "⚠️ أضف ASSISTANT_ENCRYPTION_KEY في Railway قبل تسجيل حساب جديد. لا تشارك كود الدخول أو كلمة المرور مع أي شخص.",
     ])
     bot.edit_message_text(
         "\n".join(lines),
@@ -790,6 +796,48 @@ def _handle_callback_impl(bot, call):
         bot.answer_callback_query(call.id)
         show_assistants_menu(bot, call)
         return True
+    if data == "dev_assistant_add":
+        if _ASSISTANT_POOL is None or not _ASSISTANT_POOL.available_slots():
+            bot.answer_callback_query(call.id, "لا توجد خانات فارغة (الحد 5 حسابات).", show_alert=True)
+            return True
+        bot.answer_callback_query(call.id)
+        pending_input_set(call.from_user.id, "waiting_assistant_phone")
+        bot.edit_message_text(
+            "📱 <b>إضافة حساب مساعد</b>\n\nأرسل رقم الهاتف بصيغة دولية، مثال: <code>+9647XXXXXXXXX</code>\n"
+            "ستصلك رسالة كود من Telegram. لا ترسل الكود لأي شخص. هذه الخطوة تعمل في الخاص فقط.",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=cancel_markup("dev_assistants"), parse_mode="HTML"
+        )
+        return True
+    if data == "dev_assistant_remove":
+        if _ASSISTANT_POOL is None:
+            bot.answer_callback_query(call.id, "نظام المساعدين غير جاهز.", show_alert=True)
+            return True
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for item in _ASSISTANT_POOL.slots_status():
+            if item["configured"]:
+                markup.add(types.InlineKeyboardButton(
+                    f"🗑 حذف المساعد {item['slot']}",
+                    callback_data=f"dev_assistant_remove:{item['slot']}"
+                ))
+        markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="dev_assistants"))
+        bot.answer_callback_query(call.id)
+        bot.edit_message_text(
+            "اختر الحساب الذي تريد حذفه. حسابات Railway لا يمكن حذفها من اللوحة.",
+            call.message.chat.id, call.message.message_id, reply_markup=markup
+        )
+        return True
+    if data.startswith("dev_assistant_remove:"):
+        try:
+            slot = int(data.split(":", 1)[1])
+            if _ASSISTANT_POOL is None:
+                raise RuntimeError("نظام المساعدين غير جاهز.")
+            _ASSISTANT_POOL.remove_session(slot)
+            bot.answer_callback_query(call.id, f"تم حذف المساعد {slot}.")
+            show_assistants_menu(bot, call)
+        except Exception as exc:
+            bot.answer_callback_query(call.id, f"تعذر الحذف: {exc}", show_alert=True)
+        return True
     if data == "dev_assistant_assign_chat":
         bot.answer_callback_query(call.id)
         pending_input_set(call.from_user.id, "waiting_assistant_chat_id")
@@ -1079,6 +1127,54 @@ def handle_input(bot, message):
         return False
 
     state = pending_input_get(message.from_user.id)
+    if state == "waiting_assistant_phone":
+        if message.chat.type != "private":
+            bot.reply_to(message, "⛔ أرسل رقم الهاتف في الخاص فقط.")
+            return True
+        if _ASSISTANT_POOL is None or not _ASSISTANT_POOL.available_slots():
+            pending_input_set(message.from_user.id, None)
+            bot.reply_to(message, "❌ لا توجد خانة فارغة للمساعدين.")
+            return True
+        try:
+            begin_login(message.from_user.id, (message.text or "").strip())
+            pending_input_set(message.from_user.id, "waiting_assistant_code")
+            bot.reply_to(message, "📩 تم إرسال كود Telegram. أرسل الكود هنا خلال 10 دقائق. لا تشاركه مع أحد.")
+        except Exception as exc:
+            bot.reply_to(message, f"❌ تعذر بدء تسجيل الدخول: {exc}")
+        return True
+
+    if state == "waiting_assistant_code":
+        try:
+            session = complete_login(message.from_user.id, code=(message.text or "").strip())
+            if session is None:
+                pending_input_set(message.from_user.id, "waiting_assistant_password")
+                bot.reply_to(message, "🔐 الحساب عليه تحقق بخطوتين. أرسل كلمة مرور التحقق هنا خلال 10 دقائق.")
+                return True
+            slot = _ASSISTANT_POOL.available_slots()[0]
+            _ASSISTANT_POOL.add_session(slot, session)
+            pending_input_set(message.from_user.id, None)
+            bot.reply_to(message, f"✅ تمت إضافة الحساب كمساعد {slot}. افتح لوحة المساعدين لتحديده أو تعيينه لمجموعة.")
+        except Exception as exc:
+            pending_input_set(message.from_user.id, None)
+            cancel_login(message.from_user.id)
+            bot.reply_to(message, f"❌ فشل تسجيل الدخول أو حفظ الحساب: {exc}\nابدأ العملية من جديد.")
+        return True
+
+    if state == "waiting_assistant_password":
+        try:
+            session = complete_login(message.from_user.id, password=(message.text or "").strip())
+            if not session:
+                raise RuntimeError("لم يتم إنشاء جلسة بعد.")
+            slot = _ASSISTANT_POOL.available_slots()[0]
+            _ASSISTANT_POOL.add_session(slot, session)
+            pending_input_set(message.from_user.id, None)
+            bot.reply_to(message, f"✅ تمت إضافة الحساب كمساعد {slot}.")
+        except Exception as exc:
+            pending_input_set(message.from_user.id, None)
+            cancel_login(message.from_user.id)
+            bot.reply_to(message, f"❌ فشل التحقق أو حفظ الحساب: {exc}\nابدأ العملية من جديد.")
+        return True
+
     if state in {"waiting_assistant_chat_id", "waiting_assistant_unassign_chat_id"}:
         try:
             chat_id = int((message.text or "").strip())
