@@ -158,6 +158,8 @@ class AssistantPool:
             old_runner = self._runners.get(slot)
             self._sessions[slot] = session
             self._runners[slot] = VoiceCallRunner(session_string=session)
+            if self._stream_end_handler is not None:
+                self._runners[slot].set_stream_end_handler(self._stream_end_handler)
             try:
                 save_sessions({key: value for key, value in self._sessions.items() if key not in self._environment_slots})
                 if self._started:
@@ -176,6 +178,8 @@ class AssistantPool:
                 raise ValueError("هذه الخانة مضبوطة من Railway؛ لا يمكن حذفها من اللوحة.")
             if slot not in self._sessions:
                 raise ValueError("الحساب غير موجود.")
+            if slot in self._chat_slots.values():
+                raise ValueError("هذا المساعد يشغّل أغنية حالياً. أوقف التشغيل في مجموعاته أولاً.")
             if slot == self._selected:
                 alternatives = [item for item in self._sessions if item != slot]
                 if not alternatives:
