@@ -6,7 +6,8 @@ import logging
 
 import telebot
 
-from calls import VoiceCallRunner
+from assistant_pool import AssistantPool
+from developer_panel import configure_assistant_pool
 from config import (
     BOT_LONG_POLLING_TIMEOUT,
     BOT_POLLING_TIMEOUT,
@@ -25,7 +26,8 @@ logging.basicConfig(
 log = logging.getLogger("music-bot")
 
 bot = telebot.TeleBot(TOKEN, parse_mode=None)
-voice = VoiceCallRunner()
+voice = AssistantPool()
+configure_assistant_pool(voice)
 player = MusicPlayer(MAX_QUEUE_SIZE)
 
 

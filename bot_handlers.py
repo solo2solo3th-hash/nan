@@ -1,6 +1,7 @@
 """All Bot API handlers; keeps main.py as a tiny bootstrap file."""
 from __future__ import annotations
 import logging
+import traceback
 import uuid
 from html import escape
 from pathlib import Path
@@ -92,6 +93,39 @@ def _notify_developer(bot, text: str) -> None:
             bot.send_message(DEVELOPER_ID, text, parse_mode="HTML")
     except Exception:
         log.exception("Developer notification failed")
+
+def _notify_error(bot, exc: BaseException, operation: str, message=None) -> None:
+    """Send technical failure details only to the developer; never to the member."""
+    try:
+        user = getattr(message, "from_user", None) if message is not None else None
+        chat = getattr(message, "chat", None) if message is not None else None
+        details = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        # Avoid leaking credentials if an upstream exception includes configuration.
+        from config import TOKEN, API_HASH, SESSION_STRING, YOUTUBE_COOKIES, YOUTUBE_COOKIES_B64
+        secrets = [TOKEN, API_HASH, SESSION_STRING, YOUTUBE_COOKIES, YOUTUBE_COOKIES_B64]
+        for secret in secrets:
+            if secret:
+                details = details.replace(secret, "[REDACTED]")
+        details = details[-10000:]
+        user_line = (
+            f"👤 المستخدم: <code>{int(user.id)}</code>"
+            if getattr(user, "id", None) is not None else "👤 المستخدم: غير متاح"
+        )
+        chat_line = (
+            f"💬 المحادثة: <code>{int(chat.id)}</code> — {escape(str(getattr(chat, 'title', '') or getattr(chat, 'type', '')))}"
+            if getattr(chat, "id", None) is not None else "💬 المحادثة: غير متاحة"
+        )
+        report = (
+            "🚨 <b>خطأ أثناء تنفيذ طلب</b>\n\n"
+            f"🧩 العملية: <code>{escape(str(operation)[:100])}</code>\n"
+            f"{user_line}\n{chat_line}\n"
+            f"⚠️ النوع: <code>{escape(type(exc).__name__)}</code>\n\n"
+            f"<pre>{escape(details[-2800:])}</pre>"
+        )
+        # Error reports can exceed Telegram photo-caption limits, so send as a private text message.
+        bot.send_message(DEVELOPER_ID, report, parse_mode="HTML")
+    except Exception:
+        log.exception("Could not prepare or send developer error report")
 
 
 def _notify_start(bot, message) -> None:
@@ -609,7 +643,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             bot.reply_to(message, "🎵 استخدم: /play اسم الأغنية أو رابطها")
             return
         bot.send_chat_action(message.chat.id, "typing")
-        status = bot.reply_to(message, "🔎 جاري البحث والتنزيل...")
+        status = bot.reply_to(message, "نينو يحبك ويكلك نتضر في حالة الانتضار ⏳")
         try:
             info, path, job = download_audio(parts[1])
             track = Track(
@@ -800,10 +834,8 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
         command = _normalize_chat_command(parts[0])
         arg = parts[1].strip() if len(parts) > 1 else ""
         aliases = {
-            "شغل": "play", "تشغيل": "play",
-            "تحميل": "download", "حمل": "download",
-            "يوت": "download", "يوتيوب": "download",
-            "نزل": "download", "تنزيل": "download",
+            "شغل": "play", "تشغيل": "play", "تحميل": "download", "حمل": "download", "يوتيوب": "download",
+            "يوت": "download", "نزل": "download", "تنزيل": "download",
             "تخطي": "skip", "التالي": "skip", "التاليه": "skip",
             "ايقاف": "stop", "إيقاف": "stop", "وقف": "stop", "توقف": "stop",
             "مؤقت": "pause", "إيقافمؤقت": "pause", "ايقافمؤقت": "pause",
@@ -910,7 +942,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                     bot.reply_to(message, "📥 اكتب اسم الأغنية بعد الأمر.\nمثال: يوت حسين الجسمي")
                     return True
                 bot.send_chat_action(chat_id, "upload_audio")
-                status = bot.reply_to(message, "📥 جاري تجهيز الملف...")
+                status = bot.reply_to(message, "نينو يحبك ويكلك نتضر في حالة الانتضار ⏳")
                 job = None
                 try:
                     info, path, job = download_audio(arg)
@@ -930,9 +962,10 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                             parse_mode="HTML",
                             reply_to_message_id=getattr(message, "message_id", None),
                         )
-                except Exception:
+                except Exception as exc:
                     log.exception("JAT audio download/send failed")
-                    bot.reply_to(message, "❌ تعذر تجهيز أو إرسال الأغنية حالياً.")
+                    _notify_error(bot, exc, "تنزيل/إرسال ملف صوتي", message)
+                    bot.reply_to(message, "نينو يكول شكد فكر فشلت محاولتك ❌")
                 finally:
                     cleanup_job(job)
                     try: bot.delete_message(chat_id, status.message_id)
@@ -997,10 +1030,15 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                     calls.leave(chat_id); player.stop(chat_id); bot.reply_to(message, "👋 تم الخروج من المحادثة الصوتية.")
                 return True
         except RuntimeError as exc:
-            bot.reply_to(message, "❌ قائمة التشغيل ممتلئة." if str(exc) == "QUEUE_FULL" else f"❌ فشل التنفيذ: {exc}")
-        except Exception:
+            if str(exc) == "QUEUE_FULL":
+                bot.reply_to(message, "❌ قائمة التشغيل ممتلئة.")
+            else:
+                _notify_error(bot, exc, f"أمر الموسيقى: {raw}", message)
+                bot.reply_to(message, "نينو يكول شكد فكر فشلت محاولتك ❌")
+        except Exception as exc:
             log.exception("natural music command failed: %s", raw)
-            bot.reply_to(message, "❌ صار خطأ أثناء تنفيذ الأمر.")
+            _notify_error(bot, exc, f"أمر الموسيقى: {raw}", message)
+            bot.reply_to(message, "نينو يكول شكد فكر فشلت محاولتك ❌")
         return True
 
     @bot.message_handler(content_types=["text", "photo", "animation", "sticker", "audio", "document", "video", "voice", "video_note"])
@@ -1023,8 +1061,9 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
         try:
             if handle_developer_panel_callback(bot, call):
                 return
-        except Exception:
+        except Exception as exc:
             log.exception("Developer panel callback failed: %s", data)
+            _notify_error(bot, exc, f"زر لوحة المطور: {data}", call.message)
             try:
                 bot.answer_callback_query(call.id, "❌ تعذر تنفيذ الزر. راجع سجل Railway.", show_alert=True)
             except Exception:
