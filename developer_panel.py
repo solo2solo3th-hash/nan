@@ -238,7 +238,7 @@ def show_assistants_menu(bot, call):
     if _ASSISTANT_POOL is not None:
         if _ASSISTANT_POOL.available_slots():
             markup.add(types.InlineKeyboardButton("➕ إضافة حساب مساعد", callback_data="dev_assistant_add"))
-        removable = [item for item in _ASSISTANT_POOL.slots_status() if item["configured"]]
+        removable = [item for item in _ASSISTANT_POOL.slots_status() if item["configured"] and not item.get("managed_by_railway", False)]
         if removable:
             markup.add(types.InlineKeyboardButton("➖ حذف حساب مساعد", callback_data="dev_assistant_remove"))
         markup.add(types.InlineKeyboardButton("🎯 تعيين مساعد لمجموعة", callback_data="dev_assistant_assign_chat"))
@@ -827,7 +827,7 @@ def _handle_callback_impl(bot, call):
             return True
         markup = types.InlineKeyboardMarkup(row_width=1)
         for item in _ASSISTANT_POOL.slots_status():
-            if item["configured"]:
+            if item["configured"] and not item.get("managed_by_railway", False):
                 markup.add(types.InlineKeyboardButton(
                     f"🗑 حذف المساعد {item['slot']}",
                     callback_data=f"dev_assistant_remove:{item['slot']}"
