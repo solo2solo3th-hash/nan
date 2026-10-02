@@ -159,7 +159,7 @@ class AssistantPool:
             self._sessions[slot] = session
             self._runners[slot] = VoiceCallRunner(session_string=session)
             try:
-                save_sessions(self._sessions)
+                save_sessions({key: value for key, value in self._sessions.items() if key not in self._environment_slots})
                 if self._started:
                     self._runners[slot].start()
             except Exception:
@@ -191,7 +191,7 @@ class AssistantPool:
                 "ASSISTANT_CHAT_ASSIGNMENTS",
                 json.dumps(self._chat_assignments, separators=(",", ":")),
             )
-            save_sessions(self._sessions)
+            save_sessions({key: value for key, value in self._sessions.items() if key not in self._environment_slots})
             try:
                 runner.stop()
             except Exception:
