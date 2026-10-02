@@ -28,6 +28,10 @@ def _fernet() -> Fernet:
         ) from exc
 
 
+def validate_encryption_key() -> None:
+    _fernet()
+
+
 def load_sessions() -> dict[int, str]:
     encrypted = setting_get(_STORAGE_KEY)
     if not encrypted:
