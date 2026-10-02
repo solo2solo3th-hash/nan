@@ -73,8 +73,29 @@ class AssistantPool:
             # missing or was rotated; dynamically stored accounts stay unavailable.
             log.error("Could not decrypt stored assistant accounts (%s)", type(exc).__name__)
             stored_sessions = {}
+        
+        # Build a set of environment session strings for duplicate detection.
+        env_session_strings = set(self._sessions.values())
+        
         for slot, session in stored_sessions.items():
-            if slot in self._environment_slots or session in self._sessions.values():
+            if slot in self._environment_slots:
+                # Slot is managed by Railway; skip stored session in this slot.
+                continue
+            if session in env_session_strings:
+                # Stored session string matches an environment session (likely
+                # a duplicate of slot 1's PYROGRAM_SESSION_STRING). Skip to prevent
+                # concurrent usage. Log only slot numbers, never session strings.
+                log.warning(
+                    "Skipping stored assistant slot %s: session string matches "
+                    "an environment-managed session (likely slot 1). "
+                    "Remove the duplicate from the database to restore it.",
+                    slot
+                )
+                continue
+            if session in self._sessions.values():
+                # Stored session string is already in use by another slot.
+                # This should not happen if load_sessions() is authoritative,
+                # but guard against it anyway.
                 continue
             self._sessions[slot] = session
             self._runners[slot] = VoiceCallRunner(session_string=session)
@@ -346,3 +367,4 @@ class AssistantPool:
         # Preserve compatibility for any existing runner methods not explicitly
         # routed above; chat-aware methods should be added explicitly as needed.
         return getattr(self._selected_runner(), name)
+
