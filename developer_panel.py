@@ -801,6 +801,9 @@ def _handle_callback_impl(bot, call):
         show_assistants_menu(bot, call)
         return True
     if data == "dev_assistant_add":
+        if call.message.chat.type != "private":
+            bot.answer_callback_query(call.id, "افتح لوحة المطور في الخاص لإضافة حساب بأمان.", show_alert=True)
+            return True
         if _ASSISTANT_POOL is None or not _ASSISTANT_POOL.available_slots():
             bot.answer_callback_query(call.id, "لا توجد خانات فارغة (الحد 5 حسابات).", show_alert=True)
             return True
