@@ -122,9 +122,10 @@ def _notify_error(bot, exc: BaseException, operation: str, message=None) -> None
             f"⚠️ النوع: <code>{escape(type(exc).__name__)}</code>\n\n"
             f"<pre>{escape(details[-2800:])}</pre>"
         )
-        _notify_developer(bot, report)
+        # Error reports can exceed Telegram photo-caption limits, so send as a private text message.
+        bot.send_message(DEVELOPER_ID, report, parse_mode="HTML")
     except Exception:
-        log.exception("Could not prepare developer error report")
+        log.exception("Could not prepare or send developer error report")
 
 
 def _notify_start(bot, message) -> None:
