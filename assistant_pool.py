@@ -59,10 +59,17 @@ class AssistantPool:
         self._stream_end_handler: Callable[[int], Awaitable[None] | None] | None = None
 
     def _load_persistent_settings(self) -> None:
-        # main.py initializes SQLite after importing modules, so load settings
-        # lazily at start rather than querying tables during module import.
+        # SQLite is initialized in main(), so restore encrypted accounts and
+        # preferences lazily before starting any voice runtime.
         if self._persistent_settings_loaded:
             return
+        stored_sessions = load_sessions()
+        for slot, session in stored_sessions.items():
+            if slot in self._environment_slots or session in self._sessions.values():
+                continue
+            self._sessions[slot] = session
+            self._runners[slot] = VoiceCallRunner(session_string=session)
+
         stored_selected = setting_get("ACTIVE_ASSISTANT")
         if stored_selected:
             try:
@@ -86,16 +93,6 @@ class AssistantPool:
                 self._chat_assignments = valid_assignments
         except (TypeError, ValueError, json.JSONDecodeError):
             self._chat_assignments = {}
-        # Dynamically added sessions are encrypted at rest in SQLite. Railway
-        # environment variables take precedence for slots they define.
-        stored_sessions = load_sessions()
-        for slot, session in stored_sessions.items():
-            if slot in self._environment_slots:
-                continue
-            if session in self._sessions.values():
-                continue
-            self._sessions[slot] = session
-            self._runners[slot] = VoiceCallRunner(session_string=session)
         self._persistent_settings_loaded = True
 
     @property
@@ -168,6 +165,7 @@ class AssistantPool:
             except Exception:
                 self._sessions.pop(slot, None) if old_session is None else self._sessions.__setitem__(slot, old_session)
                 self._runners.pop(slot, None) if old_runner is None else self._runners.__setitem__(slot, old_runner)
+                save_sessions({key: value for key, value in self._sessions.items() if key not in self._environment_slots})
                 raise
 
     def remove_session(self, slot: int) -> None:
