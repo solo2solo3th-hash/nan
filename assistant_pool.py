@@ -1,7 +1,8 @@
 """Five-slot assistant pool for the Telegram music bot.
 
-Only the selected assistant is started. Session strings are read exclusively
-from Railway environment variables and are never displayed or logged.
+Each configured assistant runs in an isolated runtime so groups can use
+different accounts concurrently. Session strings are read exclusively from
+Railway environment variables and are never displayed or logged.
 """
 from __future__ import annotations
 
@@ -69,11 +70,16 @@ class AssistantPool:
         try:
             raw_assignments = json.loads(setting_get("ASSISTANT_CHAT_ASSIGNMENTS") or "{}")
             if isinstance(raw_assignments, dict):
-                self._chat_assignments = {
-                    int(chat_id): int(slot)
-                    for chat_id, slot in raw_assignments.items()
-                    if int(slot) in self._runners
-                }
+                valid_assignments: dict[int, int] = {}
+                for raw_chat_id, raw_slot in raw_assignments.items():
+                    try:
+                        chat_id = int(raw_chat_id)
+                        slot = int(raw_slot)
+                    except (TypeError, ValueError):
+                        continue
+                    if slot in self._runners:
+                        valid_assignments[chat_id] = slot
+                self._chat_assignments = valid_assignments
         except (TypeError, ValueError, json.JSONDecodeError):
             self._chat_assignments = {}
         self._persistent_settings_loaded = True
