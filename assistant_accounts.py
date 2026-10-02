@@ -1,31 +1,56 @@
 """Encrypted persistence for dynamically added Telegram assistant sessions.
 
-The encryption key must be configured as ASSISTANT_ENCRYPTION_KEY in Railway.
+A valid ASSISTANT_ENCRYPTION_KEY is preferred. If it is missing/malformed,
+derive a stable Fernet key from the persistent Telegram bot TOKEN so setup can
+happen automatically without storing a second secret in the database.
+
 Never store login codes or 2FA passwords here.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import os
+
 from cryptography.fernet import Fernet, InvalidToken
 
 from database import setting_get, setting_set
 
 _STORAGE_KEY = "ASSISTANT_SESSIONS_ENCRYPTED"
+_KEY_DERIVATION_CONTEXT = b"nan/assistant-session-encryption/v1"
 
 
 def _fernet() -> Fernet:
-    key = os.getenv("ASSISTANT_ENCRYPTION_KEY", "").strip()
-    if not key:
+    configured = os.getenv("ASSISTANT_ENCRYPTION_KEY", "").strip()
+    if configured:
+        try:
+            return Fernet(configured.encode("ascii"))
+        except (ValueError, UnicodeEncodeError):
+            # Do not silently replace a malformed configured key when encrypted
+            # sessions already exist: doing so could make existing sessions
+            # permanently unreadable.
+            if setting_get(_STORAGE_KEY):
+                raise RuntimeError(
+                    "ASSISTANT_ENCRYPTION_KEY غير صالح وتوجد جلسات محفوظة. "
+                    "لا تغيّر المفتاح قبل استعادة المفتاح الأصلي."
+                )
+
+    # Automatic, repeatable fallback: derive a separate key from the existing
+    # persistent bot token. The token itself is never logged or stored here.
+    bot_token = os.getenv("TOKEN", "").strip()
+    if not bot_token:
         raise RuntimeError(
-            "اضبط ASSISTANT_ENCRYPTION_KEY في Railway قبل إضافة حسابات من لوحة المطور."
+            "تعذر إنشاء مفتاح التشفير تلقائياً: متغير TOKEN غير مضبوط في Railway."
         )
-    try:
-        return Fernet(key.encode("ascii"))
-    except (ValueError, UnicodeEncodeError) as exc:
-        raise RuntimeError(
-            "ASSISTANT_ENCRYPTION_KEY غير صالح. أنشئ مفتاح Fernet صالحاً واحفظه في Railway."
-        ) from exc
+    digest = hmac.new(
+        bot_token.encode("utf-8"),
+        _KEY_DERIVATION_CONTEXT,
+        hashlib.sha256,
+    ).digest()
+    key = base64.urlsafe_b64encode(digest)
+    return Fernet(key)
 
 
 def validate_encryption_key() -> None:
@@ -52,7 +77,8 @@ def load_sessions() -> dict[int, str]:
         return result
     except (InvalidToken, UnicodeEncodeError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         raise RuntimeError(
-            "تعذر فك تشفير حسابات المساعدين. تأكد أن ASSISTANT_ENCRYPTION_KEY لم يتغير."
+            "تعذر فك تشفير حسابات المساعدين. قد يكون مفتاح التشفير تغيّر؛ "
+            "لا تحذف قاعدة البيانات أو تستبدل المفتاح عشوائياً."
         ) from exc
 
 
