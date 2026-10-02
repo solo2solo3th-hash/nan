@@ -27,6 +27,7 @@ log = logging.getLogger("music-bot")
 
 bot = telebot.TeleBot(TOKEN, parse_mode=None)
 voice = AssistantPool()
+voice.set_bot(bot)
 configure_assistant_pool(voice)
 player = MusicPlayer(MAX_QUEUE_SIZE)
 
