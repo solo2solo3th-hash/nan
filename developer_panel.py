@@ -794,7 +794,7 @@ def _handle_callback_impl(bot, call):
         bot.answer_callback_query(call.id)
         pending_input_set(call.from_user.id, "waiting_assistant_chat_id")
         bot.edit_message_text(
-            "🆔 أرسل آيدي المجموعة التي تريد تعيين مساعد لها.\\n"
+            "🆔 أرسل آيدي المجموعة التي تريد تعيين مساعد لها.\n"
             "لإلغاء العملية اضغط رجوع.",
             call.message.chat.id, call.message.message_id,
             reply_markup=cancel_markup("dev_assistants")
