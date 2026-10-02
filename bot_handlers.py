@@ -673,10 +673,24 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             try: bot.delete_message(message.chat.id, status.message_id)
             except Exception: pass
         except RuntimeError as exc:
-            bot.send_message(message.chat.id, "❌ قائمة التشغيل ممتلئة." if str(exc) == "QUEUE_FULL" else f"❌ فشل التشغيل: {exc}")
-        except Exception:
-            log.exception("play failed")
-            bot.send_message(message.chat.id, "❌ صار خطأ أثناء البحث أو التشغيل.")
+            if str(exc) == "QUEUE_FULL":
+                bot.send_message(message.chat.id, "❌ قائمة التشغيل ممتلئة.")
+            else:
+                log.exception("play/runtime failed")
+                slot = calls.assigned_slot(message.chat.id) or calls.selected_slot
+                bot.send_message(
+                    message.chat.id,
+                    f"❌ تعذر تشغيل الأغنية بواسطة المساعد رقم {slot}.\n"
+                    f"السبب: {exc}\n"
+                    "تأكد أن المساعد موجود بالمجموعة، وأن البوت مشرف ويملك صلاحية إنشاء رابط دعوة إذا كانت المجموعة خاصة."
+                )
+        except Exception as exc:
+            log.exception("play/search failed")
+            bot.send_message(
+                message.chat.id,
+                "❌ فشل البحث أو تجهيز الأغنية قبل تشغيلها.\n"
+                f"التفاصيل: {type(exc).__name__}: {exc}"
+            )
 
     @bot.message_handler(commands=["skip", "next"])
     def skip_handler(message):
