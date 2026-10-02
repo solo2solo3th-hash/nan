@@ -243,7 +243,7 @@ def show_assistants_menu(bot, call):
         "⚠️ التبديل ممنوع أثناء وجود تشغيل مرتبط بالمساعد الحالي. جهّز جلسات الحسابات بشكل آمن خارج البوت.",
     ])
     bot.edit_message_text(
-        "\\n".join(lines),
+        "\n".join(lines),
         call.message.chat.id, call.message.message_id,
         reply_markup=markup, parse_mode="HTML"
     )
