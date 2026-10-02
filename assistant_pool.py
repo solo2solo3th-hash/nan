@@ -7,6 +7,7 @@ Railway environment variables and are never displayed or logged.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 from typing import Any, Awaitable, Callable
@@ -15,6 +16,8 @@ from calls import VoiceCallRunner
 from config import SESSION_STRING
 from database import setting_get, setting_set
 from assistant_accounts import load_sessions, save_sessions
+
+log = logging.getLogger(__name__)
 
 
 class AssistantPool:
@@ -63,7 +66,13 @@ class AssistantPool:
         # preferences lazily before starting any voice runtime.
         if self._persistent_settings_loaded:
             return
-        stored_sessions = load_sessions()
+        try:
+            stored_sessions = load_sessions()
+        except Exception as exc:
+            # Keep Railway-managed assistants usable if the encryption key is
+            # missing or was rotated; dynamically stored accounts stay unavailable.
+            log.error("Could not decrypt stored assistant accounts (%s)", type(exc).__name__)
+            stored_sessions = {}
         for slot, session in stored_sessions.items():
             if slot in self._environment_slots or session in self._sessions.values():
                 continue
