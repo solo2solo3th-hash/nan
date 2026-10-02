@@ -14,6 +14,7 @@ from typing import Any, Awaitable, Callable
 from calls import VoiceCallRunner
 from config import SESSION_STRING
 from database import setting_get, setting_set
+from assistant_accounts import load_sessions, save_sessions
 
 
 class AssistantPool:
@@ -22,6 +23,8 @@ class AssistantPool:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._sessions: dict[int, str] = {}
+        self._environment_slots: set[int] = set()
+        self._started = False
         seen_sessions: set[str] = set()
         for slot in range(1, 6):
             value = os.getenv(f"ASSISTANT_SESSION_{slot}", "").strip()
@@ -37,6 +40,7 @@ class AssistantPool:
                 )
             seen_sessions.add(value)
             self._sessions[slot] = value
+            self._environment_slots.add(slot)
 
         requested = os.getenv("ACTIVE_ASSISTANT", "1").strip()
         try:
@@ -82,6 +86,16 @@ class AssistantPool:
                 self._chat_assignments = valid_assignments
         except (TypeError, ValueError, json.JSONDecodeError):
             self._chat_assignments = {}
+        # Dynamically added sessions are encrypted at rest in SQLite. Railway
+        # environment variables take precedence for slots they define.
+        stored_sessions = load_sessions()
+        for slot, session in stored_sessions.items():
+            if slot in self._environment_slots:
+                continue
+            if session in self._sessions.values():
+                continue
+            self._sessions[slot] = session
+            self._runners[slot] = VoiceCallRunner(session_string=session)
         self._persistent_settings_loaded = True
 
     @property
@@ -131,6 +145,62 @@ class AssistantPool:
                 "running": bool(runner and runner._runtime_alive()),
             })
         return rows
+
+    def add_session(self, slot: int, session_string: str) -> None:
+        """Persist and start a newly authorized assistant account."""
+        slot = int(slot)
+        session = str(session_string).strip()
+        if not 1 <= slot <= 5 or not session:
+            raise ValueError("رقم المساعد يجب أن يكون من 1 إلى 5 والجلسة غير فارغة.")
+        with self._lock:
+            if slot in self._environment_slots:
+                raise ValueError("هذه الخانة مضبوطة من Railway؛ غيّرها من متغيرات البيئة.")
+            if session in self._sessions.values():
+                raise ValueError("هذا الحساب مضاف مسبقاً.")
+            old_session = self._sessions.get(slot)
+            old_runner = self._runners.get(slot)
+            self._sessions[slot] = session
+            self._runners[slot] = VoiceCallRunner(session_string=session)
+            try:
+                save_sessions(self._sessions)
+                if self._started:
+                    self._runners[slot].start()
+            except Exception:
+                self._sessions.pop(slot, None) if old_session is None else self._sessions.__setitem__(slot, old_session)
+                self._runners.pop(slot, None) if old_runner is None else self._runners.__setitem__(slot, old_runner)
+                raise
+
+    def remove_session(self, slot: int) -> None:
+        """Stop and remove a dynamically stored assistant; environment slots are immutable here."""
+        slot = int(slot)
+        with self._lock:
+            if slot in self._environment_slots:
+                raise ValueError("هذه الخانة مضبوطة من Railway؛ لا يمكن حذفها من اللوحة.")
+            if slot not in self._sessions:
+                raise ValueError("الحساب غير موجود.")
+            if slot == self._selected:
+                alternatives = [item for item in self._sessions if item != slot]
+                if not alternatives:
+                    raise ValueError("لا يمكن حذف المساعد الوحيد. أضف أو اختر مساعداً آخر أولاً.")
+                self._selected = alternatives[0]
+                setting_set("ACTIVE_ASSISTANT", str(self._selected))
+            runner = self._runners.pop(slot)
+            self._sessions.pop(slot)
+            for chat_id, assigned_slot in list(self._chat_assignments.items()):
+                if assigned_slot == slot:
+                    self._chat_assignments.pop(chat_id, None)
+            setting_set(
+                "ASSISTANT_CHAT_ASSIGNMENTS",
+                json.dumps(self._chat_assignments, separators=(",", ":")),
+            )
+            save_sessions(self._sessions)
+            try:
+                runner.stop()
+            except Exception:
+                pass
+
+    def available_slots(self) -> list[int]:
+        return [slot for slot in range(1, 6) if slot not in self._sessions]
 
     def select(self, slot: int) -> None:
         slot = int(slot)
@@ -184,6 +254,7 @@ class AssistantPool:
                 f"تعذر تشغيل المساعد الافتراضي {self._selected}: "
                 f"{failures[self._selected]}"
             ) from failures[self._selected]
+        self._started = True
         for slot, exc in failures.items():
             if slot != self._selected:
                 import logging
@@ -193,6 +264,7 @@ class AssistantPool:
                 )
 
     def stop(self) -> None:
+        self._started = False
         for runner in self._runners.values():
             try:
                 runner.stop()
