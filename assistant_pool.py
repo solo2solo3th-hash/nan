@@ -138,6 +138,7 @@ class AssistantPool:
             rows.append({
                 "slot": slot,
                 "configured": runner is not None,
+                "managed_by_railway": slot in self._environment_slots,
                 "selected": slot == self._selected,
                 "running": bool(runner and runner._runtime_alive()),
             })
