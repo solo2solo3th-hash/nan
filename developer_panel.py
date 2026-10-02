@@ -90,6 +90,7 @@ def main_markup():
         types.InlineKeyboardButton("🎛️ لوحة التشغيل", callback_data="dev_playback_settings"),
     )
     m.add(types.InlineKeyboardButton("💬 أوامر الشات", callback_data="dev_chat_commands"))
+    m.add(types.InlineKeyboardButton("🤖 إدارة المساعدين", callback_data="dev_assistants"))
     m.add(
         types.InlineKeyboardButton("👤 لوحة الخاص", callback_data="adm_user_panel"),
         types.InlineKeyboardButton("❌ إغلاق", callback_data="close_menu"),
@@ -204,6 +205,27 @@ def show_statistics(bot, call):
         statistics_text(bot), call.message.chat.id, call.message.message_id,
         reply_markup=m, parse_mode="HTML"
     )
+
+def show_assistants_menu(bot, call):
+    """Show assistant runtime configuration without exposing any session secrets."""
+    from config import SESSION_STRING
+
+    configured = bool(str(SESSION_STRING or "").strip())
+    status = "مضبوط" if configured else "غير مضبوط"
+    status_icon = "🟢" if configured else "🔴"
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(types.InlineKeyboardButton("🔄 تحديث الحالة", callback_data="dev_assistants"))
+    markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
+    bot.edit_message_text(
+        "🤖 <b>إدارة المساعدين</b>\\n\\n"
+        f"حالة جلسة المساعد الحالي: {status_icon} <b>{status}</b>\\n"
+        "عدد الحسابات المدعومة في التشغيل الحالي: <b>مساعد واحد</b>\\n\\n"
+        "⚠️ إضافة عدة مساعدين والتبديل بينهم تحتاج توسيع نظام التشغيل؛ هذا الزر لا يضيف جلسات جديدة بعد.\\n\\n"
+        "🔐 للأمان: لا ترسل رمز تسجيل الدخول أو كلمة مرور التحقق بخطوتين داخل البوت أو المحادثة. جهّز جلسة المساعد بشكل آمن، واحفظها في متغيرات Railway فقط. لا تعرض قيمة الجلسة هنا.",
+        call.message.chat.id, call.message.message_id,
+        reply_markup=markup, parse_mode="HTML"
+    )
+
 
 def show_broadcast_menu(bot, call):
     bot.edit_message_text(
@@ -739,6 +761,10 @@ def _handle_callback_impl(bot, call):
 
     data = call.data or ""
 
+    if data == "dev_assistants":
+        bot.answer_callback_query(call.id)
+        show_assistants_menu(bot, call)
+        return True
     if data == "dev_stats":
         bot.answer_callback_query(call.id); show_statistics(bot, call); return True
     if data == "dev_broadcast_menu":
