@@ -1,3 +1,4 @@
+
 """Railway entry point; heavy functionality lives in dedicated modules."""
 from __future__ import annotations
 
@@ -42,11 +43,18 @@ def main() -> None:
     bot_username = get_bot_username()
     setup_handlers(bot_username)
 
-    # VoiceCallRunner owns its MTProto thread/event loop. Starting it directly
-    # avoids an unnecessary second wrapper thread and simplifies startup errors.
-    voice.start()
-    log.info("Bot polling started")
     try:
+        try:
+            voice.start()
+            log.info("Voice runtime started successfully")
+        except Exception:
+            log.exception(
+                "Voice runtime failed to start. "
+                "Bot polling will continue, but music playback "
+                "will remain unavailable until the assistant session is fixed."
+            )
+
+        log.info("Bot polling started")
         bot.infinity_polling(
             skip_pending=True,
             timeout=BOT_POLLING_TIMEOUT,
@@ -59,4 +67,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
