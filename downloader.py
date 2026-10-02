@@ -213,6 +213,9 @@ def _web_search_candidate(source: str, query: str) -> str | None:
         return None
 
     for pattern in (
+        # DuckDuckGo's current redirect parameter is "uddg"; keep the
+        # legacy spelling as a compatibility fallback.
+        r'uddg=([^"&]+)',
         r'nuddg=([^"&]+)',
         r'class="result__a"[^>]+href="([^"]+)"',
     ):
