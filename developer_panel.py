@@ -99,7 +99,7 @@ def main_markup():
         types.InlineKeyboardButton("🎛️ لوحة التشغيل", callback_data="dev_playback_settings"),
     )
     m.add(types.InlineKeyboardButton("💬 أوامر الشات", callback_data="dev_chat_commands"))
-    m.add(types.InlineKeyboardButton("🤖 إدارة المساعدين", callback_data="dev_assistants"))
+    m.add(types.InlineKeyboardButton("👥 المساعدين", callback_data="dev_assistants"))
     m.add(
         types.InlineKeyboardButton("👤 لوحة الخاص", callback_data="adm_user_panel"),
         types.InlineKeyboardButton("❌ إغلاق", callback_data="close_menu"),
