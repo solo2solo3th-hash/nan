@@ -31,6 +31,13 @@ from database import (
 log = logging.getLogger(__name__)
 
 DEV_IDS = {int(DEVELOPER_ID)}
+_ASSISTANT_POOL = None
+
+
+def configure_assistant_pool(pool) -> None:
+    """Attach the runtime pool used by the developer-only assistant menu."""
+    global _ASSISTANT_POOL
+    _ASSISTANT_POOL = pool
 
 PERMISSION_LABELS = {
     "users": "👥 إدارة المستخدمين",
@@ -207,21 +214,36 @@ def show_statistics(bot, call):
     )
 
 def show_assistants_menu(bot, call):
-    """Show assistant runtime configuration without exposing any session secrets."""
-    from config import SESSION_STRING
-
-    configured = bool(str(SESSION_STRING or "").strip())
-    status = "مضبوط" if configured else "غير مضبوط"
-    status_icon = "🟢" if configured else "🔴"
+    """Show configured assistant slots without exposing session secrets."""
     markup = types.InlineKeyboardMarkup(row_width=1)
+    lines = ["🤖 <b>إدارة المساعدين (حتى 5 حسابات)</b>", ""]
+    if _ASSISTANT_POOL is None:
+        lines.append("🔴 نظام المساعدين غير متصل بواجهة التشغيل.")
+    else:
+        for item in _ASSISTANT_POOL.slots_status():
+            slot = item["slot"]
+            if not item["configured"]:
+                icon, status = "⚪", "غير مضبوط في Railway"
+            elif item["running"]:
+                icon, status = "🟢", "متصل"
+            else:
+                icon, status = "🟡", "مضبوط وغير مشغّل"
+            selected = "  ← المحدد" if item["selected"] else ""
+            lines.append(f"{icon} المساعد {slot}: <b>{status}</b>{selected}")
+            if item["configured"]:
+                label = f"✅ المساعد {slot} (المحدد)" if item["selected"] else f"🔀 اختيار المساعد {slot}"
+                markup.add(types.InlineKeyboardButton(label, callback_data=f"dev_assistant_select:{slot}"))
     markup.add(types.InlineKeyboardButton("🔄 تحديث الحالة", callback_data="dev_assistants"))
     markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
+    lines.extend([
+        "",
+        "🔐 الجلسات تُقرأ من متغيرات Railway فقط ولا تظهر هنا.",
+        "لإضافة الحسابات 2–5، أضف ASSISTANT_SESSION_2 إلى ASSISTANT_SESSION_5 في Variables، كل جلسة في متغير مستقل.",
+        "للحساب الأول يستخدم ASSISTANT_SESSION_1 إن وُجد، وإلا PYROGRAM_SESSION_STRING.",
+        "⚠️ التبديل ممنوع أثناء وجود تشغيل مرتبط بالمساعد الحالي. جهّز جلسات الحسابات بشكل آمن خارج البوت.",
+    ])
     bot.edit_message_text(
-        "🤖 <b>إدارة المساعدين</b>\n\n"
-        f"حالة جلسة المساعد الحالي: {status_icon} <b>{status}</b>\n"
-        "عدد الحسابات المدعومة في التشغيل الحالي: <b>مساعد واحد</b>\n\n"
-        "⚠️ إضافة عدة مساعدين والتبديل بينهم تحتاج توسيع نظام التشغيل؛ هذا الزر لا يضيف جلسات جديدة بعد.\n\n"
-        "🔐 للأمان: لا ترسل رمز تسجيل الدخول أو كلمة مرور التحقق بخطوتين داخل البوت أو المحادثة. جهّز جلسة المساعد بشكل آمن، واحفظها في متغيرات Railway فقط. لا تعرض قيمة الجلسة هنا.",
+        "\\n".join(lines),
         call.message.chat.id, call.message.message_id,
         reply_markup=markup, parse_mode="HTML"
     )
@@ -763,6 +785,17 @@ def _handle_callback_impl(bot, call):
 
     if data == "dev_assistants":
         bot.answer_callback_query(call.id)
+        show_assistants_menu(bot, call)
+        return True
+    if data.startswith("dev_assistant_select:"):
+        try:
+            slot = int(data.split(":", 1)[1])
+            if _ASSISTANT_POOL is None:
+                raise RuntimeError("نظام المساعدين غير جاهز.")
+            _ASSISTANT_POOL.select(slot)
+            bot.answer_callback_query(call.id, f"تم اختيار المساعد {slot}.")
+        except Exception as exc:
+            bot.answer_callback_query(call.id, f"تعذر التبديل: {exc}", show_alert=True)
         show_assistants_menu(bot, call)
         return True
     if data == "dev_stats":
