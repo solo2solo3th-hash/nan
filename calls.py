@@ -43,7 +43,7 @@ def _is_auth_key_duplicated(exc: BaseException) -> bool:
 
 
 class VoiceCallRunner:
-    def __init__(self) -> None:
+    def __init__(self, session_string: str | None = None) -> None:
         self.assistant: Client | None = None
         self.calls: PyTgCalls | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -149,7 +149,7 @@ class VoiceCallRunner:
                 "assistant",
                 api_id=API_ID,
                 api_hash=API_HASH,
-                session_string=SESSION_STRING,
+                session_string=self.session_string,
                 in_memory=True,
             )
             self.calls = PyTgCalls(self.assistant)
