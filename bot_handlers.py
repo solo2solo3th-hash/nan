@@ -445,6 +445,11 @@ def _set_pending_from_callback(call, mode: str, prompt: str, bot) -> None:
 
 
 def _handle_pending(bot, message) -> bool:
+    # Developer-panel inputs (including assistant login codes/passwords) must only
+    # be consumed in the developer's private chat. Group messages from the same
+    # user must never advance or answer a pending private workflow.
+    if message.chat.type != "private":
+        return False
     if handle_developer_panel_input(bot, message):
         return True
     pending = get_pending(message.from_user.id)
