@@ -116,10 +116,10 @@ def _notify_error(bot, exc: BaseException, operation: str, message=None) -> None
             if getattr(chat, "id", None) is not None else "💬 المحادثة: غير متاحة"
         )
         report = (
-            "🚨 <b>خطأ أثناء تنفيذ طلب</b>\\n\\n"
-            f"🧩 العملية: <code>{escape(str(operation)[:100])}</code>\\n"
-            f"{user_line}\\n{chat_line}\\n"
-            f"⚠️ النوع: <code>{escape(type(exc).__name__)}</code>\\n\\n"
+            "🚨 <b>خطأ أثناء تنفيذ طلب</b>\n\n"
+            f"🧩 العملية: <code>{escape(str(operation)[:100])}</code>\n"
+            f"{user_line}\n{chat_line}\n"
+            f"⚠️ النوع: <code>{escape(type(exc).__name__)}</code>\n\n"
             f"<pre>{escape(details[-2800:])}</pre>"
         )
         _notify_developer(bot, report)
@@ -1060,8 +1060,9 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
         try:
             if handle_developer_panel_callback(bot, call):
                 return
-        except Exception:
+        except Exception as exc:
             log.exception("Developer panel callback failed: %s", data)
+            _notify_error(bot, exc, f"زر لوحة المطور: {data}", call.message)
             try:
                 bot.answer_callback_query(call.id, "❌ تعذر تنفيذ الزر. راجع سجل Railway.", show_alert=True)
             except Exception:
