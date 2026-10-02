@@ -233,14 +233,16 @@ def show_assistants_menu(bot, call):
             if item["configured"]:
                 label = f"✅ المساعد {slot} (المحدد)" if item["selected"] else f"🔀 اختيار المساعد {slot}"
                 markup.add(types.InlineKeyboardButton(label, callback_data=f"dev_assistant_select:{slot}"))
+    if _ASSISTANT_POOL is not None:
+        markup.add(types.InlineKeyboardButton("🎯 تعيين مساعد لمجموعة", callback_data="dev_assistant_assign_chat"))
     markup.add(types.InlineKeyboardButton("🔄 تحديث الحالة", callback_data="dev_assistants"))
     markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
     lines.extend([
         "",
-        "🔐 الجلسات تُقرأ من متغيرات Railway فقط ولا تظهر هنا.",
-        "لإضافة الحسابات 2–5، أضف ASSISTANT_SESSION_2 إلى ASSISTANT_SESSION_5 في Variables، كل جلسة في متغير مستقل.",
-        "للحساب الأول يستخدم ASSISTANT_SESSION_1 إن وُجد، وإلا PYROGRAM_SESSION_STRING.",
-        "⚠️ التبديل ممنوع أثناء وجود تشغيل مرتبط بالمساعد الحالي. جهّز جلسات الحسابات بشكل آمن خارج البوت.",
+        "🔐 الجلسات لا تظهر هنا. الحسابات المهيأة حالياً تُقرأ من متغيرات Railway.",
+        "لإضافة جلسة جديدة حالياً، أضف ASSISTANT_SESSION_2 وما بعده في Railway ثم أعد تشغيل الخدمة.",
+        "يمكنك تعيين مساعد مختلف لكل مجموعة؛ التعيين محفوظ في قاعدة البيانات.",
+        "⚠️ تسجيل حساب جديد برقم الهاتف وكود التحقق من داخل البوت لم يُنفّذ بعد.",
     ])
     bot.edit_message_text(
         "\n".join(lines),
@@ -787,6 +789,29 @@ def _handle_callback_impl(bot, call):
         bot.answer_callback_query(call.id)
         show_assistants_menu(bot, call)
         return True
+    if data == "dev_assistant_assign_chat":
+        bot.answer_callback_query(call.id)
+        pending_input_set(call.from_user.id, "waiting_assistant_chat_id")
+        bot.edit_message_text(
+            "🆔 أرسل آيدي المجموعة التي تريد تعيين مساعد لها.\n"
+            "لإلغاء العملية اضغط رجوع.",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=cancel_markup("dev_assistants")
+        )
+        return True
+    if data.startswith("dev_assistant_assign:"):
+        try:
+            _, raw_chat_id, raw_slot = data.split(":", 2)
+            chat_id, slot = int(raw_chat_id), int(raw_slot)
+            if _ASSISTANT_POOL is None:
+                raise RuntimeError("نظام المساعدين غير جاهز.")
+            _ASSISTANT_POOL.assign_chat(chat_id, slot)
+            pending_input_set(call.from_user.id, None)
+            bot.answer_callback_query(call.id, "تم تعيين المساعد للمجموعة.")
+            show_assistants_menu(bot, call)
+        except Exception as exc:
+            bot.answer_callback_query(call.id, f"تعذر التعيين: {exc}", show_alert=True)
+        return True
     if data.startswith("dev_assistant_select:"):
         try:
             slot = int(data.split(":", 1)[1])
@@ -1044,6 +1069,29 @@ def handle_input(bot, message):
         return False
 
     state = pending_input_get(message.from_user.id)
+    if state == "waiting_assistant_chat_id":
+        try:
+            chat_id = int((message.text or "").strip())
+            if chat_id >= 0:
+                raise ValueError
+        except ValueError:
+            bot.reply_to(message, "❌ أرسل آيدي مجموعة صحيحاً (عادةً يبدأ بـ -100).")
+            return True
+        pending_input_set(message.from_user.id, None)
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        if _ASSISTANT_POOL is None:
+            bot.reply_to(message, "❌ نظام المساعدين غير جاهز.")
+            return True
+        for item in _ASSISTANT_POOL.slots_status():
+            if item["configured"]:
+                markup.add(types.InlineKeyboardButton(
+                    f"🤖 تعيين المساعد {item['slot']}",
+                    callback_data=f"dev_assistant_assign:{chat_id}:{item['slot']}"
+                ))
+        markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="dev_assistants"))
+        bot.reply_to(message, f"اختر المساعد للمجموعة <code>{chat_id}</code>:", reply_markup=markup, parse_mode="HTML")
+        return True
+
     if state == "waiting_add_admin":
         return add_admin_from_message(bot, message)
     if state == "waiting_remove_admin":
