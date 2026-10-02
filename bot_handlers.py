@@ -833,7 +833,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
         command = _normalize_chat_command(parts[0])
         arg = parts[1].strip() if len(parts) > 1 else ""
         aliases = {
-            "شغل": "play", "تشغيل": "play", "تحميل": "play",
+            "شغل": "play", "تشغيل": "play", "تحميل": "download", "حمل": "download", "يوتيوب": "download",
             "يوت": "download", "نزل": "download", "تنزيل": "download",
             "تخطي": "skip", "التالي": "skip", "التاليه": "skip",
             "ايقاف": "stop", "إيقاف": "stop", "وقف": "stop", "توقف": "stop",
