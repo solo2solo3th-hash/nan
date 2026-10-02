@@ -34,6 +34,21 @@ class AssistantPool:
         except ValueError:
             active = 1
         self._selected = active if active in self._sessions else min(self._sessions, default=1)
+        self._runners = {
+            slot: VoiceCallRunner(session_string=session)
+            for slot, session in self._sessions.items()
+        }
+        # Active playback ownership is temporary; group assignment is persistent.
+        self._chat_slots: dict[int, int] = {}
+        self._chat_assignments: dict[int, int] = {}
+        self._persistent_settings_loaded = False
+        self._stream_end_handler: Callable[[int], Awaitable[None] | None] | None = None
+
+    def _load_persistent_settings(self) -> None:
+        # main.py initializes SQLite after importing modules, so load settings
+        # lazily at start rather than querying tables during module import.
+        if self._persistent_settings_loaded:
+            return
         stored_selected = setting_get("ACTIVE_ASSISTANT")
         if stored_selected:
             try:
@@ -42,23 +57,17 @@ class AssistantPool:
                     self._selected = stored_slot
             except (TypeError, ValueError):
                 pass
-
-        self._runners = {
-            slot: VoiceCallRunner(session_string=session)
-            for slot, session in self._sessions.items()
-        }
-        # Active playback ownership is temporary; group assignment is persistent.
-        self._chat_slots: dict[int, int] = {}
         try:
             raw_assignments = json.loads(setting_get("ASSISTANT_CHAT_ASSIGNMENTS") or "{}")
-            self._chat_assignments = {
-                int(chat_id): int(slot)
-                for chat_id, slot in raw_assignments.items()
-                if int(slot) in self._runners
-            } if isinstance(raw_assignments, dict) else {}
+            if isinstance(raw_assignments, dict):
+                self._chat_assignments = {
+                    int(chat_id): int(slot)
+                    for chat_id, slot in raw_assignments.items()
+                    if int(slot) in self._runners
+                }
         except (TypeError, ValueError, json.JSONDecodeError):
             self._chat_assignments = {}
-        self._stream_end_handler: Callable[[int], Awaitable[None] | None] | None = None
+        self._persistent_settings_loaded = True
 
     @property
     def selected_slot(self) -> int:
@@ -142,6 +151,7 @@ class AssistantPool:
         return self._chat_assignments.get(int(chat_id))
 
     def start(self) -> None:
+        self._load_persistent_settings()
         # Each configured assistant needs its own event-loop runtime so chats
         # assigned to different accounts can play concurrently.
         started = []
