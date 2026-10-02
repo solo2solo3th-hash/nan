@@ -134,11 +134,10 @@ class AssistantPool:
 
     async def acall(self, method: str, *args: Any, **kwargs: Any):
         chat_id = int(args[0]) if args and isinstance(args[0], (int, str)) else None
+        if method == "leave_call" and chat_id is not None:
+            return self.leave(chat_id)
         runner = self._runner_for_chat(chat_id) if chat_id is not None else self._selected_runner()
-        result = runner.call(method, *args, **kwargs)
-        if hasattr(result, "__await__"):
-            return await result
-        return result
+        return runner.call(method, *args, **kwargs)
 
     def pause(self, chat_id: int):
         return self._runner_for_chat(chat_id).pause(chat_id)
