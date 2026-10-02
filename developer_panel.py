@@ -217,10 +217,10 @@ def show_assistants_menu(bot, call):
     markup.add(types.InlineKeyboardButton("🔄 تحديث الحالة", callback_data="dev_assistants"))
     markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
     bot.edit_message_text(
-        "🤖 <b>إدارة المساعدين</b>\\n\\n"
-        f"حالة جلسة المساعد الحالي: {status_icon} <b>{status}</b>\\n"
-        "عدد الحسابات المدعومة في التشغيل الحالي: <b>مساعد واحد</b>\\n\\n"
-        "⚠️ إضافة عدة مساعدين والتبديل بينهم تحتاج توسيع نظام التشغيل؛ هذا الزر لا يضيف جلسات جديدة بعد.\\n\\n"
+        "🤖 <b>إدارة المساعدين</b>\n\n"
+        f"حالة جلسة المساعد الحالي: {status_icon} <b>{status}</b>\n"
+        "عدد الحسابات المدعومة في التشغيل الحالي: <b>مساعد واحد</b>\n\n"
+        "⚠️ إضافة عدة مساعدين والتبديل بينهم تحتاج توسيع نظام التشغيل؛ هذا الزر لا يضيف جلسات جديدة بعد.\n\n"
         "🔐 للأمان: لا ترسل رمز تسجيل الدخول أو كلمة مرور التحقق بخطوتين داخل البوت أو المحادثة. جهّز جلسة المساعد بشكل آمن، واحفظها في متغيرات Railway فقط. لا تعرض قيمة الجلسة هنا.",
         call.message.chat.id, call.message.message_id,
         reply_markup=markup, parse_mode="HTML"
