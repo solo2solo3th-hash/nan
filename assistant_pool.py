@@ -152,20 +152,30 @@ class AssistantPool:
 
     def start(self) -> None:
         self._load_persistent_settings()
-        # Each configured assistant needs its own event-loop runtime so chats
-        # assigned to different accounts can play concurrently.
-        started = []
-        try:
-            for slot, runner in self._runners.items():
+        # Each configured assistant gets an isolated runtime so different
+        # groups can use different accounts concurrently. A broken secondary
+        # account must not take down otherwise-working assistants.
+        failures: dict[int, Exception] = {}
+        for slot, runner in self._runners.items():
+            try:
                 runner.start()
-                started.append(slot)
-        except Exception:
-            for slot in started:
-                try:
-                    self._runners[slot].stop()
-                except Exception:
-                    pass
-            raise
+            except Exception as exc:
+                failures[slot] = exc
+        selected_runner = self._runners.get(self._selected)
+        if selected_runner is None:
+            raise RuntimeError("لا يوجد مساعد افتراضي مضبوط.")
+        if self._selected in failures:
+            raise RuntimeError(
+                f"تعذر تشغيل المساعد الافتراضي {self._selected}: "
+                f"{failures[self._selected]}"
+            ) from failures[self._selected]
+        for slot, exc in failures.items():
+            if slot != self._selected:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Assistant slot %s failed to start; other assistants remain available: %s",
+                    slot, exc,
+                )
 
     def stop(self) -> None:
         for runner in self._runners.values():
@@ -206,7 +216,7 @@ class AssistantPool:
         if method == "leave_call" and chat_id is not None:
             return self.leave(chat_id)
         runner = self._runner_for_chat(chat_id) if chat_id is not None else self._selected_runner()
-        return runner.call(method, *args, **kwargs)
+        return await runner.acall(method, *args, **kwargs)
 
     def pause(self, chat_id: int):
         return self._runner_for_chat(chat_id).pause(chat_id)
