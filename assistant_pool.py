@@ -60,6 +60,24 @@ class AssistantPool:
         self._chat_assignments: dict[int, int] = {}
         self._persistent_settings_loaded = False
         self._stream_end_handler: Callable[[int], Awaitable[None] | None] | None = None
+        self._bot = None
+
+    def set_bot(self, bot) -> None:
+        """Attach the Bot API client for generating group invite links."""
+        self._bot = bot
+
+    def _invite_link_for_chat(self, chat_id: int) -> str | None:
+        if self._bot is None:
+            return None
+        try:
+            chat = self._bot.get_chat(int(chat_id))
+            link = getattr(chat, "invite_link", None)
+            if link:
+                return str(link)
+            return str(self._bot.export_chat_invite_link(int(chat_id)))
+        except Exception as exc:
+            log.warning("Could not obtain invite link for chat %s (%s)", chat_id, type(exc).__name__)
+            return None
 
     def _load_persistent_settings(self) -> None:
         # SQLite is initialized in main(), so restore encrypted accounts and
@@ -257,7 +275,8 @@ class AssistantPool:
 
             # Join Telegram group membership immediately when assigning it.
             # Private groups still require a usable invite link and permission.
-            runner.ensure_assistant_in_chat(chat_id)
+            invite_link = self._invite_link_for_chat(chat_id)
+            runner.ensure_assistant_in_chat(chat_id, invite_link=invite_link)
             self._chat_assignments[chat_id] = slot
             setting_set(
                 "ASSISTANT_CHAT_ASSIGNMENTS",
@@ -321,6 +340,8 @@ class AssistantPool:
             runner = self._runners.get(slot)
             if runner is None:
                 raise RuntimeError(f"جلسة المساعد رقم {slot} غير مضبوطة.")
+            invite_link = self._invite_link_for_chat(chat_id)
+            runner.ensure_assistant_in_chat(chat_id, invite_link=invite_link)
             result = runner.play(chat_id, stream)
             self._chat_slots[chat_id] = slot
             return result
