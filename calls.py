@@ -319,7 +319,7 @@ class VoiceCallRunner:
             future.cancel()
             return None
 
-    async def aensure_assistant_in_chat(self, chat_id: int) -> bool:
+    async def aensure_assistant_in_chat(self, chat_id: int, invite_link: str | None = None) -> bool:
         assistant = self.assistant
         if assistant is None:
             raise RuntimeError("Assistant session is not available")
@@ -340,7 +340,7 @@ class VoiceCallRunner:
 
         chat = await assistant.get_chat(chat_id)
         username = getattr(chat, "username", None)
-        invite_link = getattr(chat, "invite_link", None)
+        invite_link = invite_link or getattr(chat, "invite_link", None)
         join_target = f"@{username}" if username else invite_link
         if not join_target:
             raise RuntimeError(
@@ -350,13 +350,13 @@ class VoiceCallRunner:
         await assistant.join_chat(join_target)
         return True
 
-    def ensure_assistant_in_chat(self, chat_id: int) -> bool:
+    def ensure_assistant_in_chat(self, chat_id: int, invite_link: str | None = None) -> bool:
         self._ensure_ready()
         loop = self.loop
         if loop is None or loop.is_closed() or not loop.is_running():
             raise RuntimeError("Voice runtime is not ready (event loop is closed or stopped)")
         future = asyncio.run_coroutine_threadsafe(
-            self.aensure_assistant_in_chat(int(chat_id)), loop
+            self.aensure_assistant_in_chat(int(chat_id), invite_link=invite_link), loop
         )
         try:
             return bool(future.result(timeout=30))
