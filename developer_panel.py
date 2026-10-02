@@ -7,6 +7,7 @@ from telebot import types
 
 from config import DEVELOPER_ID
 from assistant_login import begin_login, complete_login, cancel_login
+from assistant_accounts import validate_encryption_key
 from database import (
     PERMISSION_GROUPS,
     PERMISSIONS,
@@ -793,12 +794,20 @@ def _handle_callback_impl(bot, call):
     data = call.data or ""
 
     if data == "dev_assistants":
+        if pending_input_get(call.from_user.id) in {"waiting_assistant_phone", "waiting_assistant_code", "waiting_assistant_password"}:
+            cancel_login(call.from_user.id)
+            pending_input_set(call.from_user.id, None)
         bot.answer_callback_query(call.id)
         show_assistants_menu(bot, call)
         return True
     if data == "dev_assistant_add":
         if _ASSISTANT_POOL is None or not _ASSISTANT_POOL.available_slots():
             bot.answer_callback_query(call.id, "لا توجد خانات فارغة (الحد 5 حسابات).", show_alert=True)
+            return True
+        try:
+            validate_encryption_key()
+        except Exception as exc:
+            bot.answer_callback_query(call.id, str(exc), show_alert=True)
             return True
         bot.answer_callback_query(call.id)
         pending_input_set(call.from_user.id, "waiting_assistant_phone")
@@ -1144,8 +1153,13 @@ def handle_input(bot, message):
         return True
 
     if state == "waiting_assistant_code":
+        code = (message.text or "").strip()
         try:
-            session = complete_login(message.from_user.id, code=(message.text or "").strip())
+            try:
+                bot.delete_message(message.chat.id, message.message_id)
+            except Exception:
+                pass
+            session = complete_login(message.from_user.id, code=code)
             if session is None:
                 pending_input_set(message.from_user.id, "waiting_assistant_password")
                 bot.reply_to(message, "🔐 الحساب عليه تحقق بخطوتين. أرسل كلمة مرور التحقق هنا خلال 10 دقائق.")
@@ -1161,8 +1175,13 @@ def handle_input(bot, message):
         return True
 
     if state == "waiting_assistant_password":
+        password = (message.text or "").strip()
         try:
-            session = complete_login(message.from_user.id, password=(message.text or "").strip())
+            try:
+                bot.delete_message(message.chat.id, message.message_id)
+            except Exception:
+                pass
+            session = complete_login(message.from_user.id, password=password)
             if not session:
                 raise RuntimeError("لم يتم إنشاء جلسة بعد.")
             slot = _ASSISTANT_POOL.available_slots()[0]
