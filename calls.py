@@ -280,7 +280,21 @@ class VoiceCallRunner:
         return await self._maybe_await(self._direct_call(method, *args, **kwargs))
 
     async def aplay(self, chat_id: int, stream: Any) -> Any:
-        return await self.acall("play", int(chat_id), stream)
+        chat_id = int(chat_id)
+        # Join first; PyTgCalls cannot stream into a voice chat the account
+        # has not joined. This async path must not call the sync bridge.
+        await self.aensure_assistant_in_chat(chat_id)
+        result = await self.acall("play", chat_id, stream)
+        if isinstance(stream, (str, os.PathLike)):
+            self._cleanup_seek_file(chat_id)
+            self._playback_state[chat_id] = {
+                "path": str(Path(stream).resolve()),
+                "offset": 0.0,
+                "started_at": time.monotonic(),
+                "paused": False,
+                "paused_at": None,
+            }
+        return result
 
     async def aassistant_status(self, chat_id: int) -> str | None:
         assistant = self.assistant
