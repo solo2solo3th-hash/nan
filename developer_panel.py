@@ -1136,6 +1136,9 @@ def handle_input(bot, message):
         return False
 
     state = pending_input_get(message.from_user.id)
+    if state in {"waiting_assistant_phone", "waiting_assistant_code", "waiting_assistant_password"} and message.chat.type != "private":
+        bot.reply_to(message, "⛔ أكواد تسجيل الدخول وكلمة المرور مسموح بها في الخاص فقط.")
+        return True
     if state == "waiting_assistant_phone":
         if message.chat.type != "private":
             bot.reply_to(message, "⛔ أرسل رقم الهاتف في الخاص فقط.")
