@@ -5,12 +5,14 @@ from Railway environment variables and are never displayed or logged.
 """
 from __future__ import annotations
 
+import json
 import os
 import threading
 from typing import Any, Awaitable, Callable
 
 from calls import VoiceCallRunner
-from config import API_HASH, API_ID, SESSION_STRING
+from config import SESSION_STRING
+from database import setting_get, setting_set
 
 
 class AssistantPool:
@@ -32,11 +34,30 @@ class AssistantPool:
         except ValueError:
             active = 1
         self._selected = active if active in self._sessions else min(self._sessions, default=1)
+        stored_selected = setting_get("ACTIVE_ASSISTANT")
+        if stored_selected:
+            try:
+                stored_slot = int(stored_selected)
+                if stored_slot in self._sessions:
+                    self._selected = stored_slot
+            except (TypeError, ValueError):
+                pass
+
         self._runners = {
             slot: VoiceCallRunner(session_string=session)
             for slot, session in self._sessions.items()
         }
+        # Active playback ownership is temporary; group assignment is persistent.
         self._chat_slots: dict[int, int] = {}
+        try:
+            raw_assignments = json.loads(setting_get("ASSISTANT_CHAT_ASSIGNMENTS") or "{}")
+            self._chat_assignments = {
+                int(chat_id): int(slot)
+                for chat_id, slot in raw_assignments.items()
+                if int(slot) in self._runners
+            } if isinstance(raw_assignments, dict) else {}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            self._chat_assignments = {}
         self._stream_end_handler: Callable[[int], Awaitable[None] | None] | None = None
 
     @property
@@ -61,7 +82,10 @@ class AssistantPool:
         return runner
 
     def _runner_for_chat(self, chat_id: int) -> VoiceCallRunner:
-        slot = self._chat_slots.get(int(chat_id), self._selected)
+        chat_id = int(chat_id)
+        slot = self._chat_slots.get(
+            chat_id, self._chat_assignments.get(chat_id, self._selected)
+        )
         runner = self._runners.get(slot)
         if runner is None:
             raise RuntimeError(f"جلسة المساعد رقم {slot} غير مضبوطة.")
@@ -89,25 +113,49 @@ class AssistantPool:
         with self._lock:
             if slot not in self._runners:
                 raise ValueError(f"المساعد {slot} غير مضبوط في متغيرات Railway.")
-            if slot == self._selected:
-                return
-            active_chats = [
-                chat_id for chat_id, owner_slot in self._chat_slots.items()
-                if owner_slot == self._selected
-            ]
-            if active_chats:
-                raise RuntimeError(
-                    "لا يمكن تبديل المساعد أثناء وجود تشغيل مرتبط بالمساعد الحالي. "
-                    "أنهوا التشغيل في المجموعات أولاً ثم حاولوا مجدداً."
-                )
-            old_runner = self._runners.get(self._selected)
-            if old_runner is not None:
-                old_runner.stop()
             self._selected = slot
-            self._selected_runner().start()
+            setting_set("ACTIVE_ASSISTANT", str(slot))
+            # Per-group runners may be active simultaneously; changing the
+            # default must not interrupt music already playing in other chats.
+
+    def assign_chat(self, chat_id: int, slot: int) -> None:
+        chat_id, slot = int(chat_id), int(slot)
+        with self._lock:
+            if slot not in self._runners:
+                raise ValueError(f"المساعد {slot} غير مضبوط في متغيرات Railway.")
+            self._chat_assignments[chat_id] = slot
+            setting_set(
+                "ASSISTANT_CHAT_ASSIGNMENTS",
+                json.dumps(self._chat_assignments, separators=(",", ":")),
+            )
+
+    def unassign_chat(self, chat_id: int) -> None:
+        chat_id = int(chat_id)
+        with self._lock:
+            self._chat_assignments.pop(chat_id, None)
+            setting_set(
+                "ASSISTANT_CHAT_ASSIGNMENTS",
+                json.dumps(self._chat_assignments, separators=(",", ":")),
+            )
+
+    def assigned_slot(self, chat_id: int) -> int | None:
+        return self._chat_assignments.get(int(chat_id))
 
     def start(self) -> None:
-        self._selected_runner().start()
+        # Each configured assistant needs its own event-loop runtime so chats
+        # assigned to different accounts can play concurrently.
+        started = []
+        try:
+            for slot, runner in self._runners.items():
+                runner.start()
+                started.append(slot)
+        except Exception:
+            for slot in started:
+                try:
+                    self._runners[slot].stop()
+                except Exception:
+                    pass
+            raise
 
     def stop(self) -> None:
         for runner in self._runners.values():
@@ -119,7 +167,9 @@ class AssistantPool:
     def play(self, chat_id: int, stream: Any):
         chat_id = int(chat_id)
         with self._lock:
-            slot = self._chat_slots.get(chat_id, self._selected)
+            slot = self._chat_slots.get(
+                chat_id, self._chat_assignments.get(chat_id, self._selected)
+            )
             runner = self._runners.get(slot)
             if runner is None:
                 raise RuntimeError(f"جلسة المساعد رقم {slot} غير مضبوطة.")
@@ -129,8 +179,17 @@ class AssistantPool:
 
     async def aplay(self, chat_id: int, stream: Any):
         chat_id = int(chat_id)
-        runner = self._runner_for_chat(chat_id)
-        await runner.aplay(chat_id, stream)
+        with self._lock:
+            runner = self._runner_for_chat(chat_id)
+            result = await runner.aplay(chat_id, stream)
+            self._chat_slots[chat_id] = self._slot_for_runner(runner)
+            return result
+
+    def _slot_for_runner(self, runner: VoiceCallRunner) -> int:
+        for slot, candidate in self._runners.items():
+            if candidate is runner:
+                return slot
+        raise RuntimeError("Assistant runner is not registered in this pool.")
 
     async def acall(self, method: str, *args: Any, **kwargs: Any):
         chat_id = int(args[0]) if args and isinstance(args[0], (int, str)) else None
