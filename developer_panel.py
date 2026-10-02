@@ -235,14 +235,15 @@ def show_assistants_menu(bot, call):
                 markup.add(types.InlineKeyboardButton(label, callback_data=f"dev_assistant_select:{slot}"))
     if _ASSISTANT_POOL is not None:
         markup.add(types.InlineKeyboardButton("🎯 تعيين مساعد لمجموعة", callback_data="dev_assistant_assign_chat"))
+        markup.add(types.InlineKeyboardButton("🧹 إلغاء تعيين مجموعة", callback_data="dev_assistant_unassign_chat"))
     markup.add(types.InlineKeyboardButton("🔄 تحديث الحالة", callback_data="dev_assistants"))
     markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
     lines.extend([
         "",
         "🔐 الجلسات لا تظهر هنا. الحسابات المهيأة حالياً تُقرأ من متغيرات Railway.",
-        "لإضافة جلسة جديدة حالياً، أضف ASSISTANT_SESSION_2 وما بعده في Railway ثم أعد تشغيل الخدمة.",
-        "يمكنك تعيين مساعد مختلف لكل مجموعة؛ التعيين محفوظ في قاعدة البيانات.",
-        "⚠️ تسجيل حساب جديد برقم الهاتف وكود التحقق من داخل البوت لم يُنفّذ بعد.",
+        "المساعد المحدد هو الافتراضي، ويمكن تعيين مساعد مستقل لكل مجموعة؛ التعيينات محفوظة في SQLite.",
+        "لإضافة جلسة أخرى في هذه النسخة، أضف ASSISTANT_SESSION_2 وما بعده في Railway ثم أعد تشغيل الخدمة.",
+        "⚠️ تسجيل حساب جديد برقم الهاتف وكود التحقق من داخل البوت غير منفّذ بعد؛ لا ترسل أكواد الدخول أو الجلسات في الرسائل.",
     ])
     bot.edit_message_text(
         "\n".join(lines),
@@ -793,8 +794,17 @@ def _handle_callback_impl(bot, call):
         bot.answer_callback_query(call.id)
         pending_input_set(call.from_user.id, "waiting_assistant_chat_id")
         bot.edit_message_text(
-            "🆔 أرسل آيدي المجموعة التي تريد تعيين مساعد لها.\n"
+            "🆔 أرسل آيدي المجموعة التي تريد تعيين مساعد لها.\\n"
             "لإلغاء العملية اضغط رجوع.",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=cancel_markup("dev_assistants")
+        )
+        return True
+    if data == "dev_assistant_unassign_chat":
+        bot.answer_callback_query(call.id)
+        pending_input_set(call.from_user.id, "waiting_assistant_unassign_chat_id")
+        bot.edit_message_text(
+            "🆔 أرسل آيدي المجموعة التي تريد إرجاعها إلى المساعد الافتراضي.",
             call.message.chat.id, call.message.message_id,
             reply_markup=cancel_markup("dev_assistants")
         )
@@ -1069,13 +1079,25 @@ def handle_input(bot, message):
         return False
 
     state = pending_input_get(message.from_user.id)
-    if state == "waiting_assistant_chat_id":
+    if state in {"waiting_assistant_chat_id", "waiting_assistant_unassign_chat_id"}:
         try:
             chat_id = int((message.text or "").strip())
             if chat_id >= 0:
                 raise ValueError
         except ValueError:
             bot.reply_to(message, "❌ أرسل آيدي مجموعة صحيحاً (عادةً يبدأ بـ -100).")
+            return True
+        if _ASSISTANT_POOL is None:
+            pending_input_set(message.from_user.id, None)
+            bot.reply_to(message, "❌ نظام المساعدين غير جاهز.")
+            return True
+        if state == "waiting_assistant_unassign_chat_id":
+            try:
+                _ASSISTANT_POOL.unassign_chat(chat_id)
+                pending_input_set(message.from_user.id, None)
+                bot.reply_to(message, "✅ رجعت المجموعة إلى المساعد الافتراضي.")
+            except Exception as exc:
+                bot.reply_to(message, f"❌ تعذر إلغاء التعيين: {exc}")
             return True
         pending_input_set(message.from_user.id, None)
         markup = types.InlineKeyboardMarkup(row_width=1)
