@@ -243,6 +243,7 @@ def show_assistants_menu(bot, call):
             markup.add(types.InlineKeyboardButton("➖ حذف حساب مساعد", callback_data="dev_assistant_remove"))
         markup.add(types.InlineKeyboardButton("🎯 تعيين مساعد لمجموعة", callback_data="dev_assistant_assign_chat"))
         markup.add(types.InlineKeyboardButton("🧹 إلغاء تعيين مجموعة", callback_data="dev_assistant_unassign_chat"))
+    markup.add(types.InlineKeyboardButton("🔗 زر المساعد", callback_data="dev_assistant_button_menu"))
     markup.add(types.InlineKeyboardButton("🔄 تحديث الحالة", callback_data="dev_assistants"))
     markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
     lines.extend([
@@ -793,6 +794,42 @@ def _handle_callback_impl(bot, call):
 
     data = call.data or ""
 
+    if data == "dev_assistant_button_menu":
+        bot.answer_callback_query(call.id)
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("📝 تعديل كتابة رسالة الحظر", callback_data="dev_assistant_button_text"),
+            types.InlineKeyboardButton("🔗 تعديل اسم الزر ورابطه", callback_data="dev_assistant_button_link"),
+            types.InlineKeyboardButton("🔙 رجوع للمساعدين", callback_data="dev_assistants"),
+        )
+        bot.edit_message_text(
+            "🔗 <b>إعدادات زر المساعد</b>\n\n"
+            "تظهر الرسالة والزر في المجموعة إذا كان المساعد محظوراً أو مطروداً.\n"
+            "يمكنك تخصيص النص، واسم الزر والرابط من هنا.",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=markup, parse_mode="HTML"
+        )
+        return True
+    if data == "dev_assistant_button_text":
+        bot.answer_callback_query(call.id)
+        pending_input_set(call.from_user.id, "waiting_assistant_notice_text")
+        bot.edit_message_text(
+            "📝 أرسل النص الذي تريد أن يظهر للمجموعة عند حظر المساعد.",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=cancel_markup("dev_assistant_button_menu")
+        )
+        return True
+    if data == "dev_assistant_button_link":
+        bot.answer_callback_query(call.id)
+        pending_input_set(call.from_user.id, "waiting_assistant_button")
+        bot.edit_message_text(
+            "🔗 أرسل اسم الزر ثم نقطتين ثم الرابط.\n"
+            "مثال: ⛓️ فك الحظر عن المساعد : https://t.me/your_username\n"
+            "لإزالة الزر أرسل: OFF",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=cancel_markup("dev_assistant_button_menu")
+        )
+        return True
     if data == "dev_assistants":
         if pending_input_get(call.from_user.id) in {"waiting_assistant_phone", "waiting_assistant_code", "waiting_assistant_password"}:
             cancel_login(call.from_user.id)
@@ -1142,6 +1179,45 @@ def handle_input(bot, message):
     if state in {"waiting_assistant_phone", "waiting_assistant_code", "waiting_assistant_password"} and message.chat.type != "private":
         bot.reply_to(message, "⛔ أكواد تسجيل الدخول وكلمة المرور مسموح بها في الخاص فقط.")
         return True
+    if state in {"waiting_assistant_notice_text", "waiting_assistant_button"}:
+        if message.chat.type != "private":
+            bot.reply_to(message, "⛔ إعدادات زر المساعد تُعدّل من الخاص فقط.")
+            return True
+        value = (message.text or "").strip()
+        if state == "waiting_assistant_notice_text":
+            if not value:
+                bot.reply_to(message, "❌ النص لا يمكن أن يكون فارغاً.")
+                return True
+            if len(value) > 1000:
+                bot.reply_to(message, "❌ الحد الأقصى للنص 1000 حرف.")
+                return True
+            setting_set("ASSISTANT_BLOCKED_TEXT", value)
+            pending_input_set(message.from_user.id, None)
+            bot.reply_to(message, "✅ تم حفظ نص رسالة المساعد.")
+            return True
+        if value.upper() == "OFF":
+            setting_set("ASSISTANT_BUTTON_NAME", "")
+            setting_set("ASSISTANT_BUTTON_URL", "")
+            pending_input_set(message.from_user.id, None)
+            bot.reply_to(message, "✅ تمت إزالة زر المساعد.")
+            return True
+        parts = [part.strip() for part in value.split(":", 1)]
+        if len(parts) != 2 or not parts[0] or not parts[1]:
+            bot.reply_to(message, "❌ الصيغة الصحيحة: اسم الزر : الرابط")
+            return True
+        name, url = parts
+        if len(name) > 64 or len(url) > 2048:
+            bot.reply_to(message, "❌ اسم الزر بحد أقصى 64 حرفاً والرابط 2048 حرفاً.")
+            return True
+        if not url.startswith(("https://", "http://", "tg://")):
+            bot.reply_to(message, "❌ الرابط يجب أن يبدأ بـ https:// أو http:// أو tg://")
+            return True
+        setting_set("ASSISTANT_BUTTON_NAME", name)
+        setting_set("ASSISTANT_BUTTON_URL", url)
+        pending_input_set(message.from_user.id, None)
+        bot.reply_to(message, "✅ تم حفظ زر المساعد ورابطه.")
+        return True
+
     if state == "waiting_assistant_phone":
         if message.chat.type != "private":
             bot.reply_to(message, "⛔ أرسل رقم الهاتف في الخاص فقط.")
