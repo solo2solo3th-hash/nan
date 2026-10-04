@@ -43,15 +43,8 @@ PYROGRAM_SESSION_STRING = (
 )
 SESSION_STRING = PYROGRAM_SESSION_STRING
 
-_HAS_ASSISTANT_SESSION = bool(SESSION_STRING) or any(
-    os.getenv(f"ASSISTANT_SESSION_{slot}", "").strip()
-    for slot in range(1, 6)
-)
-if not _HAS_ASSISTANT_SESSION:
-    raise RuntimeError(
-        "Configure PYROGRAM_SESSION_STRING (legacy SESSION_STRING is supported) "
-        "or at least one ASSISTANT_SESSION_1..ASSISTANT_SESSION_5 environment variable."
-    )
+# A session may also be loaded from the encrypted SQLite store after init_db().
+# AssistantPool.start() reports a clear error if no environment or stored session exists.
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data")).expanduser()
 DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", str(DATA_DIR / "downloads"))).expanduser()
