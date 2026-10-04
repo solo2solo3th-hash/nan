@@ -300,7 +300,11 @@ def _audio_files(job: Path) -> list[Path]:
     return files
 
 
-def _run_ffmpeg_to_mp3(source: Path, target: Path) -> None:
+def _run_ffmpeg_to_mp3(
+    source: Path,
+    target: Path,
+    bitrate_kbps: int = 192,
+) -> None:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise RuntimeError(
@@ -319,7 +323,7 @@ def _run_ffmpeg_to_mp3(source: Path, target: Path) -> None:
         "-codec:a",
         "libmp3lame",
         "-b:a",
-        "192k",
+        f"{max(32, min(192, int(bitrate_kbps)))}k",
         "-id3v2_version",
         "3",
         str(target),
@@ -365,27 +369,38 @@ def _finish(job: Path, info: dict):
         key=lambda p: p.stat().st_mtime,
     )
 
-    size_mb = source_file.stat().st_size / (1024 * 1024)
-    if size_mb > MAX_DOWNLOAD_MB:
-        raise RuntimeError(
-            f"Downloaded file exceeds MAX_DOWNLOAD_MB={MAX_DOWNLOAD_MB}"
-        )
+    # Reserve some headroom under Telegram's configured upload-size limit.
+    # Re-encode oversized source audio instead of rejecting it before conversion.
+    max_size_bytes = MAX_DOWNLOAD_MB * 1024 * 1024
+    target_size_bytes = int(max_size_bytes * 0.92)
+    source_size_bytes = source_file.stat().st_size
+    duration = max(0, int(info.get("duration") or 0))
 
     # Keep the public return contract as MP3 so existing bot_handlers.py code
-    # does not need to change.
-    if source_file.suffix.lower() == ".mp3":
+    # does not need to change. Re-encode an MP3 only when it is too large.
+    if (
+        source_file.suffix.lower() == ".mp3"
+        and source_size_bytes <= target_size_bytes
+    ):
         mp3_file = source_file
     else:
-        mp3_file = job / f"{source_file.stem}.mp3"
-        _run_ffmpeg_to_mp3(source_file, mp3_file)
+        mp3_file = job / f"{source_file.stem}-normalized.mp3"
+        bitrate_kbps = 192
+        if duration > 0:
+            # Estimate a bitrate that fits within the target size. Keep a
+            # reasonable floor; the final size check below remains authoritative.
+            estimated = int((target_size_bytes * 8 / duration / 1000) * 0.90)
+            bitrate_kbps = max(32, min(192, estimated))
+        _run_ffmpeg_to_mp3(source_file, mp3_file, bitrate_kbps=bitrate_kbps)
 
     if not mp3_file.exists() or mp3_file.stat().st_size <= 0:
         raise RuntimeError("MP3 output is missing or empty")
 
-    final_size_mb = mp3_file.stat().st_size / (1024 * 1024)
-    if final_size_mb > MAX_DOWNLOAD_MB:
+    final_size_bytes = mp3_file.stat().st_size
+    if final_size_bytes > max_size_bytes:
         raise RuntimeError(
-            f"Final MP3 exceeds MAX_DOWNLOAD_MB={MAX_DOWNLOAD_MB}"
+            f"Final MP3 exceeds MAX_DOWNLOAD_MB={MAX_DOWNLOAD_MB} even after compression. "
+            "Try a shorter track or increase MAX_DOWNLOAD_MB."
         )
 
     return info, str(mp3_file.resolve()), str(job)
