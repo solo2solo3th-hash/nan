@@ -35,8 +35,23 @@ TOKEN = _required("TOKEN")
 API_ID = _int_env("API_ID")
 API_HASH = _required("API_HASH")
 DEVELOPER_ID = _int_env("DEVELOPER_ID")
-PYROGRAM_SESSION_STRING = _required("PYROGRAM_SESSION_STRING")
+# Keep legacy variable names working, but allow the five-slot assistant pool
+# to start when one or more ASSISTANT_SESSION_<n> variables are configured.
+PYROGRAM_SESSION_STRING = (
+    os.getenv("PYROGRAM_SESSION_STRING", "").strip()
+    or os.getenv("SESSION_STRING", "").strip()
+)
 SESSION_STRING = PYROGRAM_SESSION_STRING
+
+_HAS_ASSISTANT_SESSION = bool(SESSION_STRING) or any(
+    os.getenv(f"ASSISTANT_SESSION_{slot}", "").strip()
+    for slot in range(1, 6)
+)
+if not _HAS_ASSISTANT_SESSION:
+    raise RuntimeError(
+        "Configure PYROGRAM_SESSION_STRING (legacy SESSION_STRING is supported) "
+        "or at least one ASSISTANT_SESSION_1..ASSISTANT_SESSION_5 environment variable."
+    )
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data")).expanduser()
 DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", str(DATA_DIR / "downloads"))).expanduser()
