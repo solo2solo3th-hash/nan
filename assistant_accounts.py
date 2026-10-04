@@ -28,14 +28,11 @@ def _fernet() -> Fernet:
         try:
             return Fernet(configured.encode("ascii"))
         except (ValueError, UnicodeEncodeError):
-            # Do not silently replace a malformed configured key when encrypted
-            # sessions already exist: doing so could make existing sessions
-            # permanently unreadable.
-            if setting_get(_STORAGE_KEY):
-                raise RuntimeError(
-                    "ASSISTANT_ENCRYPTION_KEY غير صالح وتوجد جلسات محفوظة. "
-                    "لا تغيّر المفتاح قبل استعادة المفتاح الأصلي."
-                )
+            # Fall back to the deterministic TOKEN-derived key. Existing data
+            # is usable only if it was encrypted with that same fallback key;
+            # load_sessions() fails safely otherwise, and callers must not
+            # overwrite the stored ciphertext.
+            pass
 
     # Automatic, repeatable fallback: derive a separate key from the existing
     # persistent bot token. The token itself is never logged or stored here.
