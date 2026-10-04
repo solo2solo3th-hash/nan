@@ -118,6 +118,11 @@ class AssistantPool:
             self._sessions[slot] = session
             self._runners[slot] = VoiceCallRunner(session_string=session)
 
+        # The default may initially be slot 1 before encrypted DB sessions are
+        # loaded. If only another stored slot exists, select it instead.
+        if self._sessions and self._selected not in self._sessions:
+            self._selected = min(self._sessions)
+
         stored_selected = setting_get("ACTIVE_ASSISTANT")
         if stored_selected:
             try:
