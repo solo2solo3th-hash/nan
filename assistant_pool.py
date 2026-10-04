@@ -308,7 +308,10 @@ class AssistantPool:
                 failures[slot] = exc
         selected_runner = self._runners.get(self._selected)
         if selected_runner is None:
-            raise RuntimeError("لا يوجد مساعد افتراضي مضبوط.")
+            raise RuntimeError(
+                "لا توجد جلسة مساعد مضبوطة. أضف جلسة من لوحة المساعدين "
+                "أو اضبط PYROGRAM_SESSION_STRING / ASSISTANT_SESSION_1..5."
+            )
         if self._selected in failures:
             raise RuntimeError(
                 f"تعذر تشغيل المساعد الافتراضي {self._selected}: "
