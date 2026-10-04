@@ -34,6 +34,12 @@ from config import API_HASH, API_ID, CALLS_READY_TIMEOUT, SESSION_STRING
 log = logging.getLogger(__name__)
 
 
+def _status_name(member_status: Any) -> str:
+    """Normalize Pyrogram enum/string statuses across library versions."""
+    value = getattr(member_status, "value", member_status)
+    return str(value).lower().rsplit(".", 1)[-1]
+
+
 def _is_auth_key_duplicated(exc: BaseException) -> bool:
     """Recognize Telegram's 406 AUTH_KEY_DUPLICATED failure."""
     text = f"{type(exc).__name__}: {exc}".upper()
@@ -279,11 +285,13 @@ class VoiceCallRunner:
             raise RuntimeError("PyTgCalls is unavailable")
         return await self._maybe_await(self._direct_call(method, *args, **kwargs))
 
-    async def aplay(self, chat_id: int, stream: Any) -> Any:
+    async def aplay(
+        self, chat_id: int, stream: Any, invite_link: str | None = None
+    ) -> Any:
         chat_id = int(chat_id)
         # Join first; PyTgCalls cannot stream into a voice chat the account
         # has not joined. This async path must not call the sync bridge.
-        await self.aensure_assistant_in_chat(chat_id)
+        await self.aensure_assistant_in_chat(chat_id, invite_link=invite_link)
         result = await self.acall("play", chat_id, stream)
         if isinstance(stream, (str, os.PathLike)):
             self._cleanup_seek_file(chat_id)
@@ -303,7 +311,7 @@ class VoiceCallRunner:
         try:
             me = await assistant.get_me()
             member = await assistant.get_chat_member(int(chat_id), me.id)
-            return str(getattr(member, "status", "")).lower() or None
+            return _status_name(getattr(member, "status", "")) or None
         except Exception:
             return None
 
@@ -319,7 +327,9 @@ class VoiceCallRunner:
             future.cancel()
             return None
 
-    async def aensure_assistant_in_chat(self, chat_id: int, invite_link: str | None = None) -> bool:
+    async def aensure_assistant_in_chat(
+        self, chat_id: int, invite_link: str | None = None
+    ) -> bool:
         assistant = self.assistant
         if assistant is None:
             raise RuntimeError("Assistant session is not available")
@@ -327,7 +337,7 @@ class VoiceCallRunner:
         me = await assistant.get_me()
         try:
             member = await assistant.get_chat_member(chat_id, me.id)
-            status = str(getattr(member, "status", "")).lower()
+            status = _status_name(getattr(member, "status", ""))
             if status not in {"left", "kicked", "banned"}:
                 if status != "restricted" or bool(getattr(member, "is_member", False)):
                     return True
@@ -335,19 +345,42 @@ class VoiceCallRunner:
             log.info(
                 "Assistant membership lookup failed for %s; attempting auto-join: %s",
                 chat_id,
-                exc,
+                type(exc).__name__,
             )
 
-        chat = await assistant.get_chat(chat_id)
-        username = getattr(chat, "username", None)
-        invite_link = invite_link or getattr(chat, "invite_link", None)
-        join_target = f"@{username}" if username else invite_link
+        # A private group's Bot API invite link may be the only usable route.
+        # Do not require get_chat(chat_id) to succeed before trying that link.
+        join_target = invite_link
+        try:
+            chat = await assistant.get_chat(chat_id)
+        except Exception as exc:
+            chat = None
+            log.info(
+                "Could not resolve chat %s through the assistant account (%s); "
+                "will use any supplied invite link.",
+                chat_id,
+                type(exc).__name__,
+            )
+
+        username = getattr(chat, "username", None) if chat is not None else None
+        discovered_link = getattr(chat, "invite_link", None) if chat is not None else None
+        if username:
+            join_target = f"@{username}"
+        elif not join_target and discovered_link:
+            join_target = str(discovered_link)
+
         if not join_target:
             raise RuntimeError(
-                "Assistant is not a member of this chat and Telegram did not provide "
-                "a public username or invite link for automatic joining"
+                "المساعد ليس عضواً في المجموعة، ولا يمكن تحديد رابط انضمام صالح. "
+                "تأكد أن البوت يملك صلاحية إنشاء رابط دعوة وأن الرابط متاح للمساعد."
             )
-        await assistant.join_chat(join_target)
+        try:
+            await assistant.join_chat(join_target)
+        except Exception as exc:
+            raise RuntimeError(
+                "تعذر إدخال المساعد إلى المجموعة تلقائياً. تأكد أن رابط الدعوة "
+                "صالح وأن الحساب غير محظور وأن المجموعة تسمح بانضمامه."
+            ) from exc
         return True
 
     def ensure_assistant_in_chat(self, chat_id: int, invite_link: str | None = None) -> bool:
@@ -394,9 +427,11 @@ class VoiceCallRunner:
             except OSError:
                 pass
 
-    def play(self, chat_id: int, stream: Any) -> Any:
+    def play(
+        self, chat_id: int, stream: Any, invite_link: str | None = None
+    ) -> Any:
         chat_id = int(chat_id)
-        self.ensure_assistant_in_chat(chat_id)
+        self.ensure_assistant_in_chat(chat_id, invite_link=invite_link)
         result = self.call("play", chat_id, stream)
         if isinstance(stream, (str, os.PathLike)):
             self._cleanup_seek_file(chat_id)
