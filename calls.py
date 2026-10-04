@@ -377,6 +377,25 @@ class VoiceCallRunner:
         try:
             await assistant.join_chat(join_target)
         except Exception as exc:
+            # Telegram may return a newer ChatInviteJoinResultOk object that
+            # some Pyrogram versions fail to parse. The join can still succeed.
+            try:
+                member = await assistant.get_chat_member(chat_id, me.id)
+                status = _status_name(getattr(member, "status", ""))
+                is_member = status not in {"left", "kicked", "banned"}
+                if status == "restricted" and not bool(getattr(member, "is_member", False)):
+                    is_member = False
+                if is_member:
+                    log.warning(
+                        "join_chat raised %s for %s, but assistant membership is confirmed",
+                        type(exc).__name__, chat_id,
+                    )
+                    return True
+            except Exception as verify_exc:
+                log.warning(
+                    "Could not verify assistant membership after join_chat failed for %s: %s",
+                    chat_id, type(verify_exc).__name__,
+                )
             raise RuntimeError(
                 "تعذر إدخال المساعد إلى المجموعة تلقائياً. تأكد أن رابط الدعوة "
                 "صالح وأن الحساب غير محظور وأن المجموعة تسمح بانضمامه."
