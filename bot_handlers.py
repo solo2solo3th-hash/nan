@@ -628,10 +628,17 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             return False
         try:
             if calls.assistant_blocked(message.chat.id):
+                notice = setting_get("ASSISTANT_BLOCKED_TEXT") or "حبيب نينو فك الحظر عن المساعد ❤️"
+                button_name = (setting_get("ASSISTANT_BUTTON_NAME") or "").strip()
+                button_url = (setting_get("ASSISTANT_BUTTON_URL") or "").strip()
+                markup = None
+                if button_name and button_url:
+                    markup = types.InlineKeyboardMarkup()
+                    markup.add(types.InlineKeyboardButton(button_name, url=button_url))
                 bot.reply_to(
                     message,
-                    "🚫 روح نينو ❤️\n"
-                    "المساعد محظور من الكروب/القناة، انتوا ضيفوا المساعد حتى أگدر أشغلكم 🎶"
+                    "🚫 " + notice,
+                    reply_markup=markup,
                 )
                 return True
         except Exception:
