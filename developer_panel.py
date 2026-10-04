@@ -795,6 +795,7 @@ def _handle_callback_impl(bot, call):
     data = call.data or ""
 
     if data == "dev_assistant_button_menu":
+        pending_input_set(call.from_user.id, None)
         bot.answer_callback_query(call.id)
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
