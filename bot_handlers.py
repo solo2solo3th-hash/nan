@@ -101,8 +101,17 @@ def _notify_error(bot, exc: BaseException, operation: str, message=None) -> None
         chat = getattr(message, "chat", None) if message is not None else None
         details = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         # Avoid leaking credentials if an upstream exception includes configuration.
-        from config import TOKEN, API_HASH, SESSION_STRING, YOUTUBE_COOKIES, YOUTUBE_COOKIES_B64
-        secrets = [TOKEN, API_HASH, SESSION_STRING, YOUTUBE_COOKIES, YOUTUBE_COOKIES_B64]
+        from config import (
+            TOKEN, API_HASH, SESSION_STRING, YOUTUBE_COOKIES,
+            YOUTUBE_COOKIES_B64, YOUTUBE_PO_TOKEN,
+        )
+        import os
+        secrets = [
+            TOKEN, API_HASH, SESSION_STRING, YOUTUBE_COOKIES,
+            YOUTUBE_COOKIES_B64, YOUTUBE_PO_TOKEN,
+            os.getenv("ASSISTANT_ENCRYPTION_KEY", ""),
+            *(os.getenv(f"ASSISTANT_SESSION_{slot}", "") for slot in range(1, 6)),
+        ]
         for secret in secrets:
             if secret:
                 details = details.replace(secret, "[REDACTED]")
