@@ -369,9 +369,13 @@ def _finish(job: Path, info: dict):
         key=lambda p: p.stat().st_mtime,
     )
 
-    # Reserve some headroom under Telegram's configured upload-size limit.
-    # Re-encode oversized source audio instead of rejecting it before conversion.
-    max_size_bytes = MAX_DOWNLOAD_MB * 1024 * 1024
+    # Telegram Bot API cloud uploads commonly reject audio around 50 MB.
+    # Keep a conservative 45 MiB ceiling even if MAX_DOWNLOAD_MB is configured
+    # higher, so files returned by this downloader can be sent with send_audio.
+    # MAX_DOWNLOAD_MB remains an additional user-configured ceiling.
+    telegram_safe_mb = 45
+    effective_max_mb = min(MAX_DOWNLOAD_MB, telegram_safe_mb)
+    max_size_bytes = effective_max_mb * 1024 * 1024
     target_size_bytes = int(max_size_bytes * 0.92)
     source_size_bytes = source_file.stat().st_size
     duration = max(0, int(info.get("duration") or 0))
@@ -399,8 +403,9 @@ def _finish(job: Path, info: dict):
     final_size_bytes = mp3_file.stat().st_size
     if final_size_bytes > max_size_bytes:
         raise RuntimeError(
-            f"Final MP3 exceeds MAX_DOWNLOAD_MB={MAX_DOWNLOAD_MB} even after compression. "
-            "Try a shorter track or increase MAX_DOWNLOAD_MB."
+            f"Final MP3 exceeds the effective upload limit of {effective_max_mb} MiB "
+            f"(MAX_DOWNLOAD_MB={MAX_DOWNLOAD_MB}) even after compression. "
+            "Try a shorter track."
         )
 
     return info, str(mp3_file.resolve()), str(job)
