@@ -702,6 +702,11 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                 )
         except Exception as exc:
             log.exception("play/search failed")
+            # The membership pre-check may be inconclusive; re-check after
+            # the voice join fails so a banned assistant gets the configured
+            # notice and URL button instead of a generic playback error.
+            if _assistant_banned_message(message):
+                return
             bot.send_message(
                 message.chat.id,
                 "❌ فشل البحث أو تجهيز الأغنية قبل تشغيلها.\n"
@@ -1097,6 +1102,10 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
         except Exception as exc:
             log.exception("natural music command failed: %s", raw)
             _notify_error(bot, exc, f"أمر الموسيقى: {raw}", message)
+            # Re-check membership after a failed play attempt; Telegram can
+            # report the ban only during the actual assistant join operation.
+            if action == "play" and _assistant_banned_message(message):
+                return True
             bot.reply_to(message, "نينو يكول شكد فكر فشلت محاولتك ❌")
         return True
 
