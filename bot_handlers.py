@@ -979,12 +979,19 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                             duration=duration,
                             reply_markup=_audio_jat_markup(),
                             parse_mode="HTML",
-                            reply_to_message_id=getattr(message, "message_id", None),
                         )
                 except Exception as exc:
                     log.exception("JAT audio download/send failed")
                     _notify_error(bot, exc, "تنزيل/إرسال ملف صوتي", message)
-                    bot.reply_to(message, "نينو يكول شكد فكر فشلت محاولتك ❌")
+                    # Do not reply to the original message: Telegram may no longer
+                    # have it available as a reply target.
+                    try:
+                        bot.send_message(
+                            chat_id,
+                            "❌ نينو، فشل إرسال الملف الصوتي. حاول مرة ثانية.",
+                        )
+                    except Exception:
+                        log.exception("Failed to send audio error notice")
                 finally:
                     cleanup_job(job)
                     try: bot.delete_message(chat_id, status.message_id)
