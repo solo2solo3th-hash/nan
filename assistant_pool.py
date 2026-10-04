@@ -341,8 +341,9 @@ class AssistantPool:
             if runner is None:
                 raise RuntimeError(f"جلسة المساعد رقم {slot} غير مضبوطة.")
             invite_link = self._invite_link_for_chat(chat_id)
-            runner.ensure_assistant_in_chat(chat_id, invite_link=invite_link)
-            result = runner.play(chat_id, stream)
+            # VoiceCallRunner handles membership verification and auto-join
+            # in one pass, with the Bot API invite link as a fallback.
+            result = runner.play(chat_id, stream, invite_link=invite_link)
             self._chat_slots[chat_id] = slot
             return result
 
@@ -350,7 +351,10 @@ class AssistantPool:
         chat_id = int(chat_id)
         with self._lock:
             runner = self._runner_for_chat(chat_id)
-            result = await runner.aplay(chat_id, stream)
+            invite_link = self._invite_link_for_chat(chat_id)
+            result = await runner.aplay(
+                chat_id, stream, invite_link=invite_link
+            )
             self._chat_slots[chat_id] = self._slot_for_runner(runner)
             return result
 
