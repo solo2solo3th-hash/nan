@@ -978,17 +978,34 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                         raise RuntimeError("DOWNLOADER_RETURNED_UNSUPPORTED_AUDIO")
                     title = str(info.get("title") or "audio").strip() or "audio"
                     duration = max(0, int(info.get("duration") or 0))
-                    with open(path, "rb") as audio:
-                        bot.send_audio(
+                    send_audio_kwargs = {
+                        "title": title,
+                        "performer": _audio_jat_performer(),
+                        "caption": _audio_jat_caption(),
+                        "duration": duration,
+                        "reply_markup": _audio_jat_markup(),
+                        "parse_mode": "HTML",
+                    }
+                    # Reply to the member's song request whenever Telegram allows it.
+                    try:
+                        with open(path, "rb") as audio:
+                            bot.send_audio(
+                                chat_id,
+                                audio,
+                                reply_to_message_id=message.message_id,
+                                **send_audio_kwargs,
+                            )
+                    except Exception as send_exc:
+                        # Telegram can reject a reply target that is no longer available.
+                        # Retry only for that specific error, and reopen the file for retry.
+                        if "message to be replied not found" not in str(send_exc).lower():
+                            raise
+                        log.warning(
+                            "Reply target unavailable for audio request in chat %s; retrying without reply",
                             chat_id,
-                            audio,
-                            title=title,
-                            performer=_audio_jat_performer(),
-                            caption=_audio_jat_caption(),
-                            duration=duration,
-                            reply_markup=_audio_jat_markup(),
-                            parse_mode="HTML",
                         )
+                        with open(path, "rb") as audio:
+                            bot.send_audio(chat_id, audio, **send_audio_kwargs)
                 except Exception as exc:
                     log.exception("JAT audio download/send failed")
                     _notify_error(bot, exc, "تنزيل/إرسال ملف صوتي", message)
