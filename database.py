@@ -176,6 +176,9 @@ def init_db() -> None:
             "CUSTOM_BTN1_URL": "",
             "CUSTOM_BTN2_NAME": "زر ثاني",
             "CUSTOM_BTN2_URL": "",
+            "ASSISTANT_BLOCKED_TEXT": "حبيب نينو فك الحظر عن المساعد ❤️",
+            "ASSISTANT_BUTTON_NAME": "",
+            "ASSISTANT_BUTTON_URL": "",
         }
         con.executemany(
             "INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", defaults.items()
