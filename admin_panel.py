@@ -16,7 +16,7 @@ from developer_panel import (
 )
 
 
-def types.InlineKeyboardButton(text, *args, emoji_key=None, **kwargs):
+def _admin_button(text, *args, emoji_key=None, **kwargs):
     from database import setting_get
     key = emoji_key or str(kwargs.get("callback_data") or text).split(":", 1)[0].upper().replace("-", "_")
     emoji_id = (setting_get(f"EMOJI_BTN_{key}") or "").strip()
