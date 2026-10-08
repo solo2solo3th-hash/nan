@@ -277,24 +277,36 @@ def playback_button_style(key: str) -> str | None:
 
 def _playback_button(text: str, callback_data: str | None = None,
                      url: str | None = None, style_key: str | None = None):
-    """Create a playback button compatible with older pyTelegramBotAPI versions.
-
-    Newer Bot API/library versions can serialize semantic button styles. Older
-    versions reject the `style` constructor argument; fall back to a normal
-    button so the playback panel still works instead of crashing entirely.
-    """
+    """Create a playback button, optionally with a Premium Custom Emoji icon."""
     kwargs = {}
     if callback_data is not None:
         kwargs["callback_data"] = callback_data
     if url is not None:
         kwargs["url"] = url
+
+    # Telegram supports icon_custom_emoji_id on inline buttons. The ID is
+    # configured by the developer from the panel; when empty, behavior is
+    # exactly the same as before.
+    custom_emoji_id = (setting_get("BUTTON_CUSTOM_EMOJI_ID") or "").strip()
+    if custom_emoji_id:
+        kwargs["icon_custom_emoji_id"] = custom_emoji_id
+
     style = playback_button_style(style_key) if style_key else None
     if style:
         try:
             return types.InlineKeyboardButton(text, style=style, **kwargs)
         except TypeError:
             log.warning("Installed pyTelegramBotAPI does not support inline button styles; using default style")
-    return types.InlineKeyboardButton(text, **kwargs)
+    excepted = False
+    try:
+        return types.InlineKeyboardButton(text, **kwargs)
+    except TypeError:
+        # Defensive fallback for an older installed library that does not know
+        # icon_custom_emoji_id. Remove only the new optional field.
+        if "icon_custom_emoji_id" in kwargs:
+            kwargs.pop("icon_custom_emoji_id", None)
+            excepted = True
+        return types.InlineKeyboardButton(text, **kwargs)
 
 
 def playback_controls():
@@ -364,7 +376,16 @@ def _audio_jat_markup():
     if not button_name or not button_url:
         return None
     keyboard = types.InlineKeyboardMarkup(row_width=1)
-    keyboard.add(types.InlineKeyboardButton(button_name[:64], url=button_url))
+    kwargs = {"url": button_url}
+    custom_emoji_id = (setting_get("BUTTON_CUSTOM_EMOJI_ID") or "").strip()
+    if custom_emoji_id:
+        kwargs["icon_custom_emoji_id"] = custom_emoji_id
+    try:
+        button = types.InlineKeyboardButton(button_name[:64], **kwargs)
+    except TypeError:
+        kwargs.pop("icon_custom_emoji_id", None)
+        button = types.InlineKeyboardButton(button_name[:64], **kwargs)
+    keyboard.add(button)
     return keyboard
 
 
