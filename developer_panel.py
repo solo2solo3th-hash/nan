@@ -1273,6 +1273,51 @@ def handle_input(bot, message):
     if state in {"waiting_assistant_phone", "waiting_assistant_code", "waiting_assistant_password"} and message.chat.type != "private":
         bot.reply_to(message, "⛔ أكواد تسجيل الدخول وكلمة المرور مسموح بها في الخاص فقط.")
         return True
+    if state == "auto_target":
+        target = (message.text or "").strip()
+        if not target:
+            bot.reply_to(message, "❌ أرسل رابط المجموعة أو @username أو Chat ID.")
+            return True
+        pending_input_set(message.from_user.id, "auto_message")
+        setting_set(f"_AUTO_TARGET_{message.from_user.id}", target)
+        bot.reply_to(message, "📨 أرسل الآن الرسالة التي تريد تكرارها.")
+        return True
+
+    if state == "auto_message":
+        value = (message.text or "").strip()
+        if not value:
+            bot.reply_to(message, "❌ الرسالة لا يمكن أن تكون فارغة.")
+            return True
+        if len(value) > 4096:
+            bot.reply_to(message, "❌ الرسالة يجب ألا تتجاوز 4096 حرفاً.")
+            return True
+        setting_set(f"_AUTO_MESSAGE_{message.from_user.id}", value)
+        pending_input_set(message.from_user.id, "auto_interval")
+        bot.reply_to(message, "⏱️ أرسل الفاصل بالدقائق. مثال: <code>30</code> يعني إرسال الرسالة كل 30 دقيقة.", parse_mode="HTML")
+        return True
+
+    if state == "auto_interval":
+        try:
+            minutes = int((message.text or "").strip())
+            if minutes < 1 or minutes > 10080:
+                raise ValueError
+        except ValueError:
+            bot.reply_to(message, "❌ أرسل رقم دقائق من 1 إلى 10080 (7 أيام).")
+            return True
+        user_id = int(message.from_user.id)
+        target = setting_get(f"_AUTO_TARGET_{user_id}") or ""
+        auto_text = setting_get(f"_AUTO_MESSAGE_{user_id}") or ""
+        if not target or not auto_text:
+            pending_input_set(user_id, None)
+            bot.reply_to(message, "❌ انتهت بيانات التلقائي. ابدأ من جديد.")
+            return True
+        item_id = auto_message_add(target, auto_text, minutes * 60)
+        setting_set(f"_AUTO_TARGET_{user_id}", "")
+        setting_set(f"_AUTO_MESSAGE_{user_id}", "")
+        pending_input_set(user_id, None)
+        bot.reply_to(message, f"✅ تم إنشاء التلقائي #{item_id}.\n🤖 سيرسل الرسالة كل <b>{minutes}</b> دقيقة.", parse_mode="HTML")
+        return True
+
     if state in {"waiting_assistant_notice_text", "waiting_assistant_button"}:
         if message.chat.type != "private":
             bot.reply_to(message, "⛔ إعدادات زر المساعد تُعدّل من الخاص فقط.")
