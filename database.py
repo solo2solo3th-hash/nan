@@ -180,6 +180,11 @@ def init_db() -> None:
             "ASSISTANT_BUTTON_NAME": "",
             "ASSISTANT_BUTTON_URL": "",
             "BUTTON_CUSTOM_EMOJI_ID": "",
+            "EMOJI_PLAY_CREDIT": "",
+            "EMOJI_PLAY_MUSIC_BUTTON": "",
+            "EMOJI_JAT_AUDIO_BUTTON": "",
+            "EMOJI_JAT_AUDIO_CREDIT": "",
+            "EMOJI_ASSISTANT_BUTTON": "",
         }
         con.executemany(
             "INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", defaults.items()
