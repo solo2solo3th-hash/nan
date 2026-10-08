@@ -6,7 +6,7 @@ from database import has_permission, is_banned, save_chat, save_user, set_pendin
 from subscriptions import show_subscription_wall
 
 
-def types.InlineKeyboardButton(text, *args, emoji_key=None, **kwargs):
+def _member_button(text, *args, emoji_key=None, **kwargs):
     key = emoji_key or str(kwargs.get("callback_data") or text).split(":", 1)[0].upper().replace("-", "_")
     emoji_id = (setting_get(f"EMOJI_BTN_{key}") or "").strip()
     if emoji_id:
@@ -34,7 +34,7 @@ def start_markup(bot_username: str):
     for name_key, url_key in (("CUSTOM_BTN1_NAME", "CUSTOM_BTN1_URL"), ("CUSTOM_BTN2_NAME", "CUSTOM_BTN2_URL")):
         name, url = setting_get(name_key), setting_get(url_key)
         if name and url and url.startswith(("https://", "http://", "tg://")):
-            keyboard.add(_member_button(name, url=url))
+            keyboard.add(_member_button(name, url=url, emoji_key=("CUSTOM_BTN1" if name_key == "CUSTOM_BTN1_NAME" else "CUSTOM_BTN2")))
     return keyboard
 
 
