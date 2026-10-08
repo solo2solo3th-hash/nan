@@ -382,10 +382,12 @@ def _playback_text(track: Track | None) -> str:
     credit_url = (setting_get("PLAY_CREDIT_URL") or "").strip()
     if credit:
         safe_credit = escape(credit)
+        credit_emoji = (setting_get("EMOJI_PLAY_CREDIT") or "").strip()
+        credit_prefix = f'<tg-emoji emoji-id="{escape(credit_emoji, quote=True)}">😀</tg-emoji> ' if credit_emoji else ""
         if credit_url and credit_url.startswith(("https://", "http://", "tg://")):
-            text += f'\n<a href="{escape(credit_url, quote=True)}">{safe_credit}</a>'
+            text += f'\n{credit_prefix}<a href="{escape(credit_url, quote=True)}">{safe_credit}</a>'
         else:
-            text += f"\n{safe_credit}"
+            text += f"\n{credit_prefix}{safe_credit}"
     return text
 
 
