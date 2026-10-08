@@ -54,6 +54,19 @@ PERMISSION_LABELS = {
     "playback": "🎵 التحكم بالتشغيل",
 }
 
+def _panel_button(text, *args, emoji_key=None, **kwargs):
+    """Build a developer-panel button and optionally attach its Premium Custom Emoji."""
+    key = emoji_key or str(kwargs.get("callback_data") or text).split(":", 1)[0].upper().replace("-", "_")
+    emoji_id = (setting_get(f"EMOJI_BTN_{key}") or "").strip()
+    if emoji_id:
+        kwargs["icon_custom_emoji_id"] = emoji_id
+    try:
+        return types.InlineKeyboardButton(text, *args, **kwargs)
+    except TypeError:
+        kwargs.pop("icon_custom_emoji_id", None)
+        return types.InlineKeyboardButton(text, *args, **kwargs)
+
+
 def pending_input_set(user_id: int, state: str | None) -> None:
     if state is None:
         clear_pending(user_id)
