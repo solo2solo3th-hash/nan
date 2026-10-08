@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
+from urllib.parse import urlparse
 
 import telebot
 
@@ -15,7 +18,7 @@ from config import (
     MAX_QUEUE_SIZE,
     TOKEN,
 )
-from database import init_db
+from database import init_db, auto_message_claim_due
 from bot_handlers import register_handlers
 from music_player import MusicPlayer
 
@@ -32,6 +35,36 @@ configure_assistant_pool(voice)
 player = MusicPlayer(MAX_QUEUE_SIZE)
 
 
+def _auto_target(target: str) -> str:
+    value = str(target or "").strip()
+    if value.lstrip("-").isdigit() or value.startswith("@"):
+        return value
+    parsed = urlparse(value if "://" in value else "https://" + value)
+    host = (parsed.netloc or "").lower()
+    path = parsed.path.strip("/")
+    if host in {"t.me", "telegram.me"} and path:
+        first = path.split("/", 1)[0]
+        if first.startswith("+"):
+            return value
+        return "@" + first.lstrip("@")
+    return value
+
+
+def _automatic_message_worker() -> None:
+    while True:
+        try:
+            now = int(time.time())
+            for row in auto_message_claim_due(now):
+                item_id, target, message_text = int(row[0]), row[1], row[2]
+                try:
+                    bot.send_message(_auto_target(target), message_text)
+                except Exception:
+                    log.exception("Automatic message #%s failed for target %s", item_id, target)
+        except Exception:
+            log.exception("Automatic message scheduler failed")
+        time.sleep(5)
+
+
 def get_bot_username() -> str:
     me = bot.get_me()
     return me.username or "bot"
@@ -45,6 +78,7 @@ def main() -> None:
     init_db()
     bot_username = get_bot_username()
     setup_handlers(bot_username)
+    threading.Thread(target=_automatic_message_worker, name="automatic-messages", daemon=True).start()
 
     try:
         try:
