@@ -270,6 +270,30 @@ def _download_one(source: str, target: str, job: Path):
     with yt_dlp.YoutubeDL(options) as ydl:
         info = ydl.extract_info(target, download=True)
 
+    # yt-dlp can report success while exposing the final output path only
+    # through filepath/requested_downloads. Recover that file into the job
+    # directory before _finish() scans for usable audio.
+    if info:
+        candidates = []
+        for key in ("filepath", "_filename"):
+            value = info.get(key)
+            if value:
+                candidates.append(Path(str(value)))
+        for item in info.get("requested_downloads") or []:
+            if isinstance(item, dict):
+                value = item.get("filepath") or item.get("_filename")
+                if value:
+                    candidates.append(Path(str(value)))
+        for candidate in candidates:
+            try:
+                if candidate.is_file() and candidate.stat().st_size > 0:
+                    destination = job / candidate.name
+                    if candidate.resolve() != destination.resolve():
+                        shutil.copy2(candidate, destination)
+                    break
+            except (OSError, RuntimeError):
+                continue
+
     if info and info.get("entries"):
         info = next(
             (item for item in info["entries"] if item),
