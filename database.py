@@ -180,6 +180,7 @@ def init_db() -> None:
             "ASSISTANT_BUTTON_NAME": "",
             "ASSISTANT_BUTTON_URL": "",
             "BUTTON_CUSTOM_EMOJI_ID": "",
+            "PLAY_RICH_TEXT_HTML": "",
         }
         con.executemany(
             "INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", defaults.items()
