@@ -84,7 +84,6 @@ _EMOJI_TARGETS = [
     ("PLAY_MUSIC_BUTTON", "🎵 زر الموسيقى"),
     ("JAT_AUDIO_BUTTON", "🔘 زر تحت الملف الصوتي"),
     ("JAT_AUDIO_CREDIT", "📝 الكتابة تحت/بجانب الملف"),
-    ("CUSTOM_BTN2", "🔘 الزر المخصص الثاني"),
     ("PLAY_CREDIT", "✍️ كتابة لوحة التشغيل"),
     ("ASSISTANT_BUTTON", "🤖 زر المساعد"),
     ("CUSTOM_BTN1", "🔘 زر /start الأول"),
