@@ -269,9 +269,16 @@ def user_can_play(message, permission: str = "playback") -> bool:
     return True
 
 
-def _bot_button(text, *args, **kwargs):
-    """Create any bot inline button with the selected Premium Custom Emoji icon."""
-    custom_emoji_id = _custom_button_emoji_id()
+def _button_emoji_key(callback_data=None, fallback=None):
+    raw = str(callback_data or fallback or "").strip()
+    return raw.split(":", 1)[0].upper().replace("-", "_")
+
+
+def _bot_button(text, *args, emoji_key=None, **kwargs):
+    """Create an inline button with its own independent Premium Custom Emoji."""
+    callback_data = kwargs.get("callback_data")
+    key = emoji_key or _button_emoji_key(callback_data, text)
+    custom_emoji_id = (setting_get(f"EMOJI_BTN_{key}") or "").strip()
     if custom_emoji_id:
         kwargs["icon_custom_emoji_id"] = custom_emoji_id
     try:
@@ -303,7 +310,7 @@ def _playback_button(text: str, callback_data: str | None = None,
         kwargs["url"] = url
 
     style = playback_button_style(style_key) if style_key else None
-    custom_emoji_id = _custom_button_emoji_id()
+    custom_emoji_id = (setting_get(f"EMOJI_BTN_{(style_key or _button_emoji_key(callback_data, text)).upper()}") or "").strip()
     if custom_emoji_id:
         kwargs["icon_custom_emoji_id"] = custom_emoji_id
     if style:
@@ -390,7 +397,7 @@ def _audio_jat_markup():
         return None
     keyboard = types.InlineKeyboardMarkup(row_width=1)
     kwargs = {"url": button_url}
-    button = _playback_button(button_name[:64], url=button_url, style_key="custom1")
+    button = _bot_button(button_name[:64], url=button_url, emoji_key="JAT_AUDIO_BUTTON")
     keyboard.add(button)
     return keyboard
 
@@ -401,9 +408,11 @@ def _audio_jat_caption() -> str | None:
     url = (setting_get("JAT_AUDIO_CREDIT_URL") or "").strip()
     if not name:
         return None
+    emoji_id = (setting_get("EMOJI_JAT_AUDIO_CREDIT") or "").strip()
+    prefix = f'<tg-emoji emoji-id="{escape(emoji_id, quote=True)}">😀</tg-emoji> ' if emoji_id else ""
     if url:
-        return f'<a href="{escape(url, quote=True)}">{escape(name)}</a>'
-    return escape(name)
+        return f'{prefix}<a href="{escape(url, quote=True)}">{escape(name)}</a>'
+    return prefix + escape(name)
 
 
 def _audio_jat_performer() -> str:
