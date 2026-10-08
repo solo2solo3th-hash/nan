@@ -28,6 +28,10 @@ from database import (
     setting_get,
     setting_set,
     subscriptions,
+    auto_messages_list,
+    auto_message_add,
+    auto_message_set_enabled,
+    auto_message_delete,
 )
 
 log = logging.getLogger(__name__)
@@ -112,6 +116,7 @@ def main_markup():
         _panel_button("🎛️ لوحة التشغيل", callback_data="dev_playback_settings"),
     )
     m.add(_panel_button("💬 أوامر الشات", callback_data="dev_chat_commands"))
+    m.add(_panel_button("🤖 التلقائي", callback_data="auto_menu"))
     m.add(_panel_button("👥 المساعدين", callback_data="dev_assistants"))
     m.add(
         _panel_button("👤 لوحة الخاص", callback_data="adm_user_panel"),
@@ -803,12 +808,84 @@ def _back_to_main(bot, call):
 def _handle_callback_impl(bot, call):
     """Internal callback dispatcher; returns True when consumed."""
     if not is_developer(call.from_user.id):
-        if (call.data or "").startswith(("dev_", "admin_", "bc_", "toggle_perm:", "fs_", "set_fs_", "back_to_main", "close_menu")):
+        if (call.data or "").startswith(("dev_", "admin_", "bc_", "auto_", "toggle_perm:", "fs_", "set_fs_", "back_to_main", "close_menu")):
             bot.answer_callback_query(call.id, "⛔ هذه اللوحة خاصة بالمطور.", show_alert=True)
             return True
         return False
 
     data = call.data or ""
+
+    if data == "auto_menu":
+        pending_input_set(call.from_user.id, None)
+        bot.answer_callback_query(call.id)
+        rows = []
+        items = auto_messages_list()
+        for item in items:
+            item_id, target, message_text, interval_seconds, enabled, next_run_at, created_at = item
+            mins = max(1, int(interval_seconds) // 60)
+            status = "🟢 شغال" if enabled else "⏸️ متوقف"
+            rows.append([_panel_button(f"{status} #{item_id} — كل {mins} دقيقة", callback_data=f"auto_view:{item_id}")])
+        rows.append([_panel_button("➕ إضافة تلقائي", callback_data="auto_add")])
+        rows.append([_panel_button("🔙 رجوع", callback_data="back_to_main")])
+        text_lines = ["🤖 <b>التلقائي</b>", "", "النظام يرسل الرسالة المحددة إلى المجموعة بشكل دوري حتى توقفه أو تحذفه."]
+        if not items:
+            text_lines.append("لا توجد مهام تلقائية حالياً.")
+        bot.edit_message_text("\n".join(text_lines), call.message.chat.id, call.message.message_id,
+                              reply_markup=types.InlineKeyboardMarkup(rows), parse_mode="HTML")
+        return True
+
+    if data == "auto_add":
+        pending_input_set(call.from_user.id, "auto_target")
+        bot.answer_callback_query(call.id)
+        bot.edit_message_text(
+            "🤖 <b>إضافة تلقائي</b>\n\nأرسل رابط المجموعة أو @username أو Chat ID.\nمثال: <code>https://t.me/example</code>",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=cancel_markup("auto_menu"), parse_mode="HTML"
+        )
+        return True
+
+    if data.startswith("auto_view:"):
+        item_id = int(data.split(":", 1)[1])
+        item = auto_messages_list()
+        item = next((x for x in item if int(x[0]) == item_id), None)
+        if not item:
+            bot.answer_callback_query(call.id, "التلقائي غير موجود.", show_alert=True)
+            return True
+        _, target, message_text, interval_seconds, enabled, _, _ = item
+        mins = max(1, int(interval_seconds) // 60)
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(_panel_button("⏸️ إيقاف" if enabled else "▶️ تشغيل", callback_data=f"auto_toggle:{item_id}"))
+        markup.add(_panel_button("🗑️ حذف", callback_data=f"auto_delete:{item_id}"))
+        markup.add(_panel_button("🔙 رجوع", callback_data="auto_menu"))
+        bot.answer_callback_query(call.id)
+        bot.edit_message_text(
+            f"🤖 <b>التلقائي #{item_id}</b>\n\n"
+            f"📍 الهدف: <code>{target}</code>\n"
+            f"⏱️ كل: <code>{mins}</code> دقيقة\n"
+            f"📨 الرسالة:\n{message_text}\n\n"
+            f"الحالة: {'🟢 شغال' if enabled else '⏸️ متوقف'}",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=markup, parse_mode="HTML"
+        )
+        return True
+
+    if data.startswith("auto_toggle:"):
+        item_id = int(data.split(":", 1)[1])
+        item = next((x for x in auto_messages_list() if int(x[0]) == item_id), None)
+        if not item:
+            bot.answer_callback_query(call.id, "غير موجود.", show_alert=True)
+            return True
+        auto_message_set_enabled(item_id, not bool(item[4]))
+        bot.answer_callback_query(call.id, "تم التحديث.")
+        call.data = f"auto_view:{item_id}"
+        return _handle_callback_impl(bot, call)
+
+    if data.startswith("auto_delete:"):
+        item_id = int(data.split(":", 1)[1])
+        auto_message_delete(item_id)
+        bot.answer_callback_query(call.id, "🗑️ تم الحذف.")
+        call.data = "auto_menu"
+        return _handle_callback_impl(bot, call)
 
     if data == "dev_assistant_button_menu":
         pending_input_set(call.from_user.id, None)
