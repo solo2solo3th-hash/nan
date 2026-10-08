@@ -185,6 +185,13 @@ def init_db() -> None:
             "EMOJI_JAT_AUDIO_BUTTON": "",
             "EMOJI_JAT_AUDIO_CREDIT": "",
             "EMOJI_ASSISTANT_BUTTON": "",
+            "EMOJI_BTN_PLAY_MUSIC_BUTTON": "",
+            "EMOJI_BTN_CUSTOM_BTN1": "",
+            "EMOJI_BTN_PLAY_CUSTOM_BTN2": "",
+            "EMOJI_BTN_CHAT_COMMANDS_BUTTON": "",
+            "EMOJI_BTN_JAT_AUDIO_BUTTON": "",
+            "EMOJI_BTN_JAT_AUDIO_CREDIT": "",
+            "EMOJI_BTN_PLAY_CREDIT": "",
         }
         con.executemany(
             "INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", defaults.items()
