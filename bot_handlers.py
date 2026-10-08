@@ -284,29 +284,13 @@ def _playback_button(text: str, callback_data: str | None = None,
     if url is not None:
         kwargs["url"] = url
 
-    # Telegram supports icon_custom_emoji_id on inline buttons. The ID is
-    # configured by the developer from the panel; when empty, behavior is
-    # exactly the same as before.
-    custom_emoji_id = (setting_get("BUTTON_CUSTOM_EMOJI_ID") or "").strip()
-    if custom_emoji_id:
-        kwargs["icon_custom_emoji_id"] = custom_emoji_id
-
     style = playback_button_style(style_key) if style_key else None
     if style:
         try:
             return types.InlineKeyboardButton(text, style=style, **kwargs)
         except TypeError:
             log.warning("Installed pyTelegramBotAPI does not support inline button styles; using default style")
-    excepted = False
-    try:
-        return types.InlineKeyboardButton(text, **kwargs)
-    except TypeError:
-        # Defensive fallback for an older installed library that does not know
-        # icon_custom_emoji_id. Remove only the new optional field.
-        if "icon_custom_emoji_id" in kwargs:
-            kwargs.pop("icon_custom_emoji_id", None)
-            excepted = True
-        return types.InlineKeyboardButton(text, **kwargs)
+    return types.InlineKeyboardButton(text, **kwargs)
 
 
 def playback_controls():
@@ -353,10 +337,17 @@ def _playback_text(track: Track | None) -> str:
         return "⏹️ انتهت قائمة التشغيل."
 
     title = escape(str(track.title))
-    text = (
-        f"حبيب ياسر شغنالك: {title}\n"
-        f"مدة التشغيل: {duration_text(track.duration)}"
-    )
+    rich_text = (setting_get("PLAY_RICH_TEXT_HTML") or "").strip()
+    if rich_text:
+        text = (
+            f"{rich_text}\n"
+            f"مدة التشغيل: {duration_text(track.duration)}"
+        )
+    else:
+        text = (
+            f"حبيب ياسر شغنالك: {title}\n"
+            f"مدة التشغيل: {duration_text(track.duration)}"
+        )
     # Optional clickable credit line below the duration, configured by the developer.
     credit = (setting_get("PLAY_CREDIT_NAME") or "").strip()
     credit_url = (setting_get("PLAY_CREDIT_URL") or "").strip()
@@ -377,14 +368,7 @@ def _audio_jat_markup():
         return None
     keyboard = types.InlineKeyboardMarkup(row_width=1)
     kwargs = {"url": button_url}
-    custom_emoji_id = (setting_get("BUTTON_CUSTOM_EMOJI_ID") or "").strip()
-    if custom_emoji_id:
-        kwargs["icon_custom_emoji_id"] = custom_emoji_id
-    try:
-        button = types.InlineKeyboardButton(button_name[:64], **kwargs)
-    except TypeError:
-        kwargs.pop("icon_custom_emoji_id", None)
-        button = types.InlineKeyboardButton(button_name[:64], **kwargs)
+    button = types.InlineKeyboardButton(button_name[:64], **kwargs)
     keyboard.add(button)
     return keyboard
 
