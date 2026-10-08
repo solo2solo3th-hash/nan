@@ -673,6 +673,7 @@ _PLAYBACK_BUTTON_LABELS = {
     "custom1": "🔗 الزر المخصص الأول",
     "custom2": "🔗 الزر المخصص الثاني",
     "top": "🔝 زر الأعلى",
+    "jat_audio_button": "🔘 زر الجات",
 }
 
 _PLAYBACK_COLOR_LABELS = {
@@ -1096,7 +1097,7 @@ def _handle_callback_impl(bot, call):
     if data == "play_button_colors":
         bot.answer_callback_query(call.id)
         bot.edit_message_text(
-            "🎨 <b>ألوان أزرار لوحة التشغيل</b>\n\nاختر الزر ثم اللون. ألوان Telegram هي أنماط دلالية (أزرق/أخضر/أحمر) وتظهر حسب دعم تطبيق Telegram؛ لا يمكن فرض لون مخصص أو ضمانه على كل الأجهزة.",
+            "🎨 <b>ألوان أزرار لوحة التشغيل والجات</b>\n\nاختر الزر ثم اللون. ألوان Telegram هي أنماط دلالية (أزرق/أخضر/أحمر) وتظهر حسب دعم تطبيق Telegram؛ لا يمكن فرض لون مخصص أو ضمانه على كل الأجهزة.",
             call.message.chat.id, call.message.message_id,
             reply_markup=playback_button_colors_markup(), parse_mode="HTML"
         )
