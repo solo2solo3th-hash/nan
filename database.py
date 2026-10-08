@@ -151,6 +151,15 @@ def init_db() -> None:
                 message_id INTEGER,
                 created_at INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS auto_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                target TEXT NOT NULL,
+                message_text TEXT NOT NULL,
+                interval_seconds INTEGER NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                next_run_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL
+            );
             """
         )
         defaults = {
@@ -208,6 +217,59 @@ def init_db() -> None:
                 (key, value),
             )
 
+
+
+def auto_messages_list():
+    with db() as con:
+        return con.execute(
+            "SELECT id,target,message_text,interval_seconds,enabled,next_run_at,created_at "
+            "FROM auto_messages ORDER BY id"
+        ).fetchall()
+
+
+def auto_message_add(target: str, message_text: str, interval_seconds: int) -> int:
+    now = int(time.time())
+    with db() as con:
+        cur = con.execute(
+            "INSERT INTO auto_messages(target,message_text,interval_seconds,enabled,next_run_at,created_at) "
+            "VALUES(?,?,?,?,?,?)",
+            (target.strip(), message_text, int(interval_seconds), 1, now, now),
+        )
+        return int(cur.lastrowid)
+
+
+def auto_message_get(item_id: int):
+    with db() as con:
+        return con.execute(
+            "SELECT id,target,message_text,interval_seconds,enabled,next_run_at,created_at "
+            "FROM auto_messages WHERE id=?", (int(item_id),)
+        ).fetchone()
+
+
+def auto_message_set_enabled(item_id: int, enabled: bool) -> None:
+    with db() as con:
+        con.execute(
+            "UPDATE auto_messages SET enabled=?, next_run_at=? WHERE id=?",
+            (1 if enabled else 0, int(time.time()), int(item_id)),
+        )
+
+
+def auto_message_delete(item_id: int) -> None:
+    with db() as con:
+        con.execute("DELETE FROM auto_messages WHERE id=?", (int(item_id),))
+
+
+def auto_message_claim_due(now: int, limit: int = 20):
+    with db() as con:
+        rows = con.execute(
+            "SELECT id,target,message_text,interval_seconds,enabled,next_run_at,created_at "
+            "FROM auto_messages WHERE enabled=1 AND next_run_at<=? ORDER BY next_run_at LIMIT ?",
+            (int(now), int(limit)),
+        ).fetchall()
+        for row in rows:
+            next_run = int(now) + max(1, int(row[3]))
+            con.execute("UPDATE auto_messages SET next_run_at=? WHERE id=?", (next_run, int(row[0])))
+        return rows
 
 def setting_get(key: str) -> Optional[str]:
     with db() as con:
