@@ -361,7 +361,7 @@ def playback_controls():
     btn2_name = (setting_get("CUSTOM_BTN2_NAME") or "").strip()
     btn2_url = (setting_get("CUSTOM_BTN2_URL") or "").strip()
     if btn2_name and btn2_url:
-        keyboard.row(_playback_button(btn2_name[:64], url=btn2_url, style_key="CUSTOM_BTN2"))
+        keyboard.row(_playback_button(btn2_name[:64], url=btn2_url, style_key="PLAY_CUSTOM_BTN2"))
 
     # Bottom row: requested top button.
     keyboard.row(_playback_button(label("top", "🔝"), callback_data="music_top", style_key="music_top"))
