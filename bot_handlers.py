@@ -596,13 +596,50 @@ def _handle_pending(bot, message) -> bool:
         if mode == "edit_start_text":
             setting_set("START_TEXT", text)
         elif mode in {"edit_btn1_input", "edit_btn2_input"}:
-            parts = text.split("|", 1)
-            if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
-                bot.reply_to(message, "❌ الصيغة: اسم الزر | الرابط")
+            raw = message.text or ""
+            sep = raw.find("|")
+            if sep < 0:
+                bot.reply_to(message, "❌ الصيغة: اسم الزر + Premium Emoji | الرابط")
+                return True
+            name = raw[:sep].strip()
+            url = raw[sep + 1:].strip()
+            custom_emoji_id = None
+
+            def _utf16_index(value, units):
+                total = 0
+                for index, char in enumerate(value):
+                    if total >= units:
+                        return index
+                    total += len(char.encode("utf-16-le")) // 2
+                    if total >= units:
+                        return index + 1
+                return len(value)
+
+            for entity in (getattr(message, "entities", None) or []):
+                if getattr(entity, "type", None) == "custom_emoji":
+                    offset = int(getattr(entity, "offset", 0))
+                    length = int(getattr(entity, "length", 0))
+                    if offset + length <= sep:
+                        custom_emoji_id = getattr(entity, "custom_emoji_id", None)
+                        if custom_emoji_id:
+                            start = _utf16_index(raw, offset)
+                            end = _utf16_index(raw, offset + length)
+                            name = (raw[:start] + raw[end:sep]).strip()
+                            break
+
+            if not name or not url:
+                bot.reply_to(message, "❌ أرسل اسم الزر والرابط.")
+                return True
+            if len(name) > 64:
+                bot.reply_to(message, "❌ اسم الزر يجب ألا يتجاوز 64 حرفاً.")
+                return True
+            if not url.startswith(("https://", "http://", "tg://")):
+                bot.reply_to(message, "❌ الرابط يجب أن يبدأ بـ https:// أو http:// أو tg://")
                 return True
             prefix = "CUSTOM_BTN1" if mode == "edit_btn1_input" else "CUSTOM_BTN2"
-            setting_set(prefix + "_NAME", parts[0].strip())
-            setting_set(prefix + "_URL", parts[1].strip())
+            setting_set(prefix + "_NAME", name)
+            setting_set(prefix + "_URL", url)
+            setting_set(f"EMOJI_BTN_{prefix}", str(custom_emoji_id or ""))
         else:
             mapping = {
                 "play_source1":"SOURCE1_NAME", "play_source1_url":"SOURCE1_URL",
