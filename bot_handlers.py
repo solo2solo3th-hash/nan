@@ -915,6 +915,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                 _bot_button(
                     name[:64],
                     url=url,
+                    emoji_key="CHAT_COMMANDS_BUTTON",
                 )
             )
 
