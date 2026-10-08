@@ -99,22 +99,22 @@ def is_developer(user_id: int) -> bool:
 def main_markup():
     m = types.InlineKeyboardMarkup(row_width=2)
     m.add(
-        types.InlineKeyboardButton("📊 إحصائيات البوت", callback_data="dev_stats"),
-        types.InlineKeyboardButton("📢 قسم الإذاعة", callback_data="dev_broadcast_menu"),
+        _panel_button("📊 إحصائيات البوت", callback_data="dev_stats"),
+        _panel_button("📢 قسم الإذاعة", callback_data="dev_broadcast_menu"),
     )
     m.add(
-        types.InlineKeyboardButton("👥 إدارة المشرفين", callback_data="dev_admins_menu"),
-        types.InlineKeyboardButton("📢 الاشتراك الإجباري", callback_data="dev_forced_sub"),
+        _panel_button("👥 إدارة المشرفين", callback_data="dev_admins_menu"),
+        _panel_button("📢 الاشتراك الإجباري", callback_data="dev_forced_sub"),
     )
     m.add(
-        types.InlineKeyboardButton("🔐 الحقوق", callback_data="dev_rights"),
-        types.InlineKeyboardButton("🎛️ لوحة التشغيل", callback_data="dev_playback_settings"),
+        _panel_button("🔐 الحقوق", callback_data="dev_rights"),
+        _panel_button("🎛️ لوحة التشغيل", callback_data="dev_playback_settings"),
     )
-    m.add(types.InlineKeyboardButton("💬 أوامر الشات", callback_data="dev_chat_commands"))
-    m.add(types.InlineKeyboardButton("👥 المساعدين", callback_data="dev_assistants"))
+    m.add(_panel_button("💬 أوامر الشات", callback_data="dev_chat_commands"))
+    m.add(_panel_button("👥 المساعدين", callback_data="dev_assistants"))
     m.add(
-        types.InlineKeyboardButton("👤 لوحة الخاص", callback_data="adm_user_panel"),
-        types.InlineKeyboardButton("❌ إغلاق", callback_data="close_menu"),
+        _panel_button("👤 لوحة الخاص", callback_data="adm_user_panel"),
+        _panel_button("❌ إغلاق", callback_data="close_menu"),
     )
     return m
 
@@ -139,8 +139,8 @@ def permissions_select_markup():
     rows = []
     for item in list_sudos():
         uid = _admin_id(item)
-        rows.append([types.InlineKeyboardButton(f"👤 {uid}", callback_data=f"admin_perms:{uid}")])
-    rows.append([types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main")])
+        rows.append([_panel_button(f"👤 {uid}", callback_data=f"admin_perms:{uid}")])
+    rows.append([_panel_button("🔙 رجوع", callback_data="back_to_main")])
     return types.InlineKeyboardMarkup(rows)
 
 
@@ -151,23 +151,23 @@ def permission_markup(user_id: int):
 
 def back_markup(target="back_to_main"):
     return types.InlineKeyboardMarkup(
-        [[types.InlineKeyboardButton("🔙 رجوع", callback_data=target)]]
+        [[_panel_button("🔙 رجوع", callback_data=target)]]
     )
 
 
 def cancel_markup(target):
     return types.InlineKeyboardMarkup(
-        [[types.InlineKeyboardButton("❌ إلغاء", callback_data=target)]]
+        [[_panel_button("❌ إلغاء", callback_data=target)]]
     )
 
 
 def admins_markup():
     m = types.InlineKeyboardMarkup(row_width=1)
     m.add(
-        types.InlineKeyboardButton("➕ صعد مشرف جديد", callback_data="admin_add"),
-        types.InlineKeyboardButton("➖ شيل مشرف", callback_data="admin_remove"),
-        types.InlineKeyboardButton("📋 رؤية المشرفين وصلاحياتهم", callback_data="admin_list"),
-        types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"),
+        _panel_button("➕ صعد مشرف جديد", callback_data="admin_add"),
+        _panel_button("➖ شيل مشرف", callback_data="admin_remove"),
+        _panel_button("📋 رؤية المشرفين وصلاحياتهم", callback_data="admin_list"),
+        _panel_button("🔙 رجوع", callback_data="back_to_main"),
     )
     return m
 
@@ -175,10 +175,10 @@ def admins_markup():
 def broadcast_markup():
     m = types.InlineKeyboardMarkup(row_width=1)
     m.add(
-        types.InlineKeyboardButton("📢 إذاعة للكل (أعضاء وبوتات وقنوات)", callback_data="bc_all"),
-        types.InlineKeyboardButton("👤 إذاعة للأعضاء فقط", callback_data="bc_users"),
-        types.InlineKeyboardButton("📢 إذاعة للقنوات فقط", callback_data="bc_channels"),
-        types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"),
+        _panel_button("📢 إذاعة للكل (أعضاء وبوتات وقنوات)", callback_data="bc_all"),
+        _panel_button("👤 إذاعة للأعضاء فقط", callback_data="bc_users"),
+        _panel_button("📢 إذاعة للقنوات فقط", callback_data="bc_channels"),
+        _panel_button("🔙 رجوع", callback_data="back_to_main"),
     )
     return m
 
@@ -220,8 +220,8 @@ def statistics_text(bot=None):
 
 def show_statistics(bot, call):
     m = types.InlineKeyboardMarkup()
-    m.add(types.InlineKeyboardButton("🔄 تحديث الإحصائيات", callback_data="dev_stats"))
-    m.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
+    m.add(_panel_button("🔄 تحديث الإحصائيات", callback_data="dev_stats"))
+    m.add(_panel_button("🔙 رجوع", callback_data="back_to_main"))
     bot.edit_message_text(
         statistics_text(bot), call.message.chat.id, call.message.message_id,
         reply_markup=m, parse_mode="HTML"
@@ -246,18 +246,18 @@ def show_assistants_menu(bot, call):
             lines.append(f"{icon} المساعد {slot}: <b>{status}</b>{selected}")
             if item["configured"]:
                 label = f"✅ المساعد {slot} (المحدد)" if item["selected"] else f"🔀 اختيار المساعد {slot}"
-                markup.add(types.InlineKeyboardButton(label, callback_data=f"dev_assistant_select:{slot}"))
+                markup.add(_panel_button(label, callback_data=f"dev_assistant_select:{slot}"))
     if _ASSISTANT_POOL is not None:
         if _ASSISTANT_POOL.available_slots():
-            markup.add(types.InlineKeyboardButton("➕ إضافة حساب مساعد", callback_data="dev_assistant_add"))
+            markup.add(_panel_button("➕ إضافة حساب مساعد", callback_data="dev_assistant_add"))
         removable = [item for item in _ASSISTANT_POOL.slots_status() if item["configured"] and not item.get("managed_by_railway", False)]
         if removable:
-            markup.add(types.InlineKeyboardButton("➖ حذف حساب مساعد", callback_data="dev_assistant_remove"))
-        markup.add(types.InlineKeyboardButton("🎯 تعيين مساعد لمجموعة", callback_data="dev_assistant_assign_chat"))
-        markup.add(types.InlineKeyboardButton("🧹 إلغاء تعيين مجموعة", callback_data="dev_assistant_unassign_chat"))
-    markup.add(types.InlineKeyboardButton("🔗 زر المساعد", callback_data="dev_assistant_button_menu"))
-    markup.add(types.InlineKeyboardButton("🔄 تحديث الحالة", callback_data="dev_assistants"))
-    markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
+            markup.add(_panel_button("➖ حذف حساب مساعد", callback_data="dev_assistant_remove"))
+        markup.add(_panel_button("🎯 تعيين مساعد لمجموعة", callback_data="dev_assistant_assign_chat"))
+        markup.add(_panel_button("🧹 إلغاء تعيين مجموعة", callback_data="dev_assistant_unassign_chat"))
+    markup.add(_panel_button("🔗 زر المساعد", callback_data="dev_assistant_button_menu"))
+    markup.add(_panel_button("🔄 تحديث الحالة", callback_data="dev_assistants"))
+    markup.add(_panel_button("🔙 رجوع", callback_data="back_to_main"))
     lines.extend([
         "",
         "🔐 الجلسات المخزنة من اللوحة مشفّرة في SQLite، ولا تُعرض داخل اللوحة.",
@@ -331,11 +331,11 @@ def show_admin_list(bot, call):
     for item in list_sudos():
         uid = _admin_id(item)
         rows.append([
-            types.InlineKeyboardButton(
+            _panel_button(
                 f"👤 {uid}", callback_data=f"admin_perms:{uid}"
             )
         ])
-    rows.append([types.InlineKeyboardButton("🔙 رجوع", callback_data="dev_admins_menu")])
+    rows.append([_panel_button("🔙 رجوع", callback_data="dev_admins_menu")])
     bot.edit_message_text(
         admins_text(), call.message.chat.id, call.message.message_id,
         reply_markup=types.InlineKeyboardMarkup(rows), parse_mode="HTML"
@@ -388,8 +388,8 @@ def add_admin_from_message(bot, message):
 
     pending_input_set(message.from_user.id, None)
     m = types.InlineKeyboardMarkup()
-    m.add(types.InlineKeyboardButton("⚙️ إدارة الصلاحيات", callback_data=f"admin_perms:{uid}"))
-    m.add(types.InlineKeyboardButton("🔙 إدارة المشرفين", callback_data="dev_admins_menu"))
+    m.add(_panel_button("⚙️ إدارة الصلاحيات", callback_data=f"admin_perms:{uid}"))
+    m.add(_panel_button("🔙 إدارة المشرفين", callback_data="dev_admins_menu"))
     bot.reply_to(
         message,
         f"✅ تم رفع المستخدم <code>{uid}</code> مشرفاً بنجاح!\n"
@@ -437,12 +437,12 @@ def permissions_markup(uid):
         label = PERMISSION_LABELS.get(key, key)
         icon = "🟢" if perms.get(key) else "🔴"
         rows.append([
-            types.InlineKeyboardButton(
+            _panel_button(
                 f"{icon} {label}",
                 callback_data=f"toggle_perm:{uid}:{key}"
             )
         ])
-    rows.append([types.InlineKeyboardButton("🔙 قائمة المشرفين", callback_data="admin_list")])
+    rows.append([_panel_button("🔙 قائمة المشرفين", callback_data="admin_list")])
     return types.InlineKeyboardMarkup(rows)
 
 
@@ -504,21 +504,21 @@ def _sub_target(item):
 def forced_sub_markup():
     m = types.InlineKeyboardMarkup(row_width=1)
     enabled = setting_get("SUBS_ENABLED") == "ON"
-    m.add(types.InlineKeyboardButton(
+    m.add(_panel_button(
         "اجباري الاستخدام", callback_data="fs_toggle_usage"
     ))
     for item in subscriptions():
         sid = _sub_id(item)
         target = _sub_target(item)
         if sid is not None:
-            m.add(types.InlineKeyboardButton(
+            m.add(_panel_button(
                 f"❌ حذف {target}", callback_data=f"fs_remove:{target}"
             ))
-    m.add(types.InlineKeyboardButton(
+    m.add(_panel_button(
         "🔗 تعيين قناة الاشتراك الإجباري", callback_data="set_fs_channel"
     ))
-    m.add(types.InlineKeyboardButton("🔄 تحديث", callback_data="dev_forced_sub"))
-    m.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
+    m.add(_panel_button("🔄 تحديث", callback_data="dev_forced_sub"))
+    m.add(_panel_button("🔙 رجوع", callback_data="back_to_main"))
     return m
 
 
@@ -590,12 +590,12 @@ def _rights_group_label(group):
 def rights_markup(uid: int):
     m = types.InlineKeyboardMarkup(row_width=2)
     for group in PERMISSION_GROUPS:
-        m.add(types.InlineKeyboardButton(_rights_group_label(group), callback_data=f"rights_group:{uid}:{group}"))
+        m.add(_panel_button(_rights_group_label(group), callback_data=f"rights_group:{uid}:{group}"))
     m.row(
-        types.InlineKeyboardButton("🟢 تفعيل الكل", callback_data=f"rights_all:{uid}:1"),
-        types.InlineKeyboardButton("🔴 تعطيل الكل", callback_data=f"rights_all:{uid}:0"),
+        _panel_button("🟢 تفعيل الكل", callback_data=f"rights_all:{uid}:1"),
+        _panel_button("🔴 تعطيل الكل", callback_data=f"rights_all:{uid}:0"),
     )
-    m.add(types.InlineKeyboardButton("↩️ المشرفين", callback_data="dev_admins_menu"))
+    m.add(_panel_button("↩️ المشرفين", callback_data="dev_admins_menu"))
     return m
 
 
@@ -605,12 +605,12 @@ def rights_group_markup(uid: int, group: str):
     for key, label in PERMISSION_GROUPS[group].items():
         permission = f"{group}.{key}"
         icon = "🟢" if state.get(permission, False) else "🔴"
-        m.add(types.InlineKeyboardButton(f"{icon} {label}", callback_data=f"rights_toggle:{uid}:{permission}"))
+        m.add(_panel_button(f"{icon} {label}", callback_data=f"rights_toggle:{uid}:{permission}"))
     m.row(
-        types.InlineKeyboardButton("🟢 تفعيل القسم", callback_data=f"rights_group_all:{uid}:{group}:1"),
-        types.InlineKeyboardButton("🔴 تعطيل القسم", callback_data=f"rights_group_all:{uid}:{group}:0"),
+        _panel_button("🟢 تفعيل القسم", callback_data=f"rights_group_all:{uid}:{group}:1"),
+        _panel_button("🔴 تعطيل القسم", callback_data=f"rights_group_all:{uid}:{group}:0"),
     )
-    m.add(types.InlineKeyboardButton("↩️ كل الأقسام", callback_data=f"admin_rights:{uid}"))
+    m.add(_panel_button("↩️ كل الأقسام", callback_data=f"admin_rights:{uid}"))
     return m
 
 
@@ -626,8 +626,8 @@ def show_rights_admins(bot, call):
     rows = []
     for item in list_sudos():
         uid = _admin_id(item)
-        rows.append([types.InlineKeyboardButton(f"👤 {uid}", callback_data=f"admin_rights:{uid}")])
-    rows.append([types.InlineKeyboardButton("↩️ رجوع", callback_data="back_to_main")])
+        rows.append([_panel_button(f"👤 {uid}", callback_data=f"admin_rights:{uid}")])
+    rows.append([_panel_button("↩️ رجوع", callback_data="back_to_main")])
     bot.edit_message_text(
         "🔐 <b>اختر المشرف الذي تريد تعديل حقوقه:</b>",
         call.message.chat.id, call.message.message_id,
@@ -647,14 +647,14 @@ def show_private_rights(bot, call):
 
 def playback_settings_markup():
     m = types.InlineKeyboardMarkup(row_width=1)
-    m.add(types.InlineKeyboardButton("✍️ الكتابة: الاسم + الرابط", callback_data="play_credit_pair"))
-    m.add(types.InlineKeyboardButton("🎵 زر الموسيقى: الاسم + الرابط", callback_data="play_music_pair"))
+    m.add(_panel_button("✍️ الكتابة: الاسم + الرابط", callback_data="play_credit_pair"))
+    m.add(_panel_button("🎵 زر الموسيقى: الاسم + الرابط", callback_data="play_music_pair"))
     m.add(_panel_button("✨ Premium Emoji للأزرار", callback_data="play_custom_emoji"))
-    m.add(types.InlineKeyboardButton("🖼️ صورة لوحة التشغيل", callback_data="play_set_image"))
-    m.add(types.InlineKeyboardButton("🎨 ألوان أزرار لوحة التشغيل", callback_data="play_button_colors"))
-    m.add(types.InlineKeyboardButton("📝 أسماء أزرار التشغيل", callback_data="play_button_labels"))
-    m.add(types.InlineKeyboardButton("🎵 أغنية الجات", callback_data="jat_audio_menu"))
-    m.add(types.InlineKeyboardButton("↩️ رجوع", callback_data="back_to_main"))
+    m.add(_panel_button("🖼️ صورة لوحة التشغيل", callback_data="play_set_image"))
+    m.add(_panel_button("🎨 ألوان أزرار لوحة التشغيل", callback_data="play_button_colors"))
+    m.add(_panel_button("📝 أسماء أزرار التشغيل", callback_data="play_button_labels"))
+    m.add(_panel_button("🎵 أغنية الجات", callback_data="jat_audio_menu"))
+    m.add(_panel_button("↩️ رجوع", callback_data="back_to_main"))
     return m
 
 
@@ -684,12 +684,12 @@ def playback_button_colors_markup():
         current = (setting_get(f"PLAY_BTN_COLOR_{key.upper()}") or "default").strip().lower()
         if current not in _PLAYBACK_COLOR_LABELS:
             current = "default"
-        m.add(types.InlineKeyboardButton(
+        m.add(_panel_button(
             f"{label} — {_PLAYBACK_COLOR_LABELS[current]}",
             callback_data=f"play_color:{key}",
         ))
-    m.add(types.InlineKeyboardButton("🧹 إرجاع كل الألوان افتراضي", callback_data="play_colors_reset"))
-    m.add(types.InlineKeyboardButton("↩️ رجوع", callback_data="dev_playback_settings"))
+    m.add(_panel_button("🧹 إرجاع كل الألوان افتراضي", callback_data="play_colors_reset"))
+    m.add(_panel_button("↩️ رجوع", callback_data="dev_playback_settings"))
     return m
 
 
@@ -697,20 +697,20 @@ def playback_button_color_picker(key: str):
     label = _PLAYBACK_BUTTON_LABELS.get(key, key)
     m = types.InlineKeyboardMarkup(row_width=2)
     for color, color_label in _PLAYBACK_COLOR_LABELS.items():
-        m.add(types.InlineKeyboardButton(
+        m.add(_panel_button(
             color_label, callback_data=f"play_color_set:{key}:{color}"
         ))
-    m.add(types.InlineKeyboardButton("↩️ رجوع", callback_data="play_button_colors"))
+    m.add(_panel_button("↩️ رجوع", callback_data="play_button_colors"))
     return m
 
 
 def jat_audio_markup():
     m = types.InlineKeyboardMarkup(row_width=1)
-    m.add(types.InlineKeyboardButton("🔘 الزر تحت الأغنية: الاسم + الرابط", callback_data="jat_audio_button"))
-    m.add(types.InlineKeyboardButton("📝 الكتابة داخل الأغنية: الاسم + الرابط", callback_data="jat_audio_credit"))
-    m.add(types.InlineKeyboardButton("🎤 مصدر الأغنية", callback_data="jat_audio_performer"))
-    m.add(types.InlineKeyboardButton("🗑️ مسح إعدادات أغنية الجات", callback_data="jat_audio_clear"))
-    m.add(types.InlineKeyboardButton("↩️ رجوع", callback_data="dev_playback_settings"))
+    m.add(_panel_button("🔘 الزر تحت الأغنية: الاسم + الرابط", callback_data="jat_audio_button"))
+    m.add(_panel_button("📝 الكتابة داخل الأغنية: الاسم + الرابط", callback_data="jat_audio_credit"))
+    m.add(_panel_button("🎤 مصدر الأغنية", callback_data="jat_audio_performer"))
+    m.add(_panel_button("🗑️ مسح إعدادات أغنية الجات", callback_data="jat_audio_clear"))
+    m.add(_panel_button("↩️ رجوع", callback_data="dev_playback_settings"))
     return m
 
 
@@ -735,9 +735,9 @@ def show_jat_audio(bot, call):
 
 def chat_commands_markup():
     m = types.InlineKeyboardMarkup(row_width=1)
-    m.add(types.InlineKeyboardButton("✍️ اسم الزر + الرابط", callback_data="chat_cmd_button"))
-    m.add(types.InlineKeyboardButton("🗑️ حذف الزر", callback_data="chat_cmd_button_clear"))
-    m.add(types.InlineKeyboardButton("↩️ رجوع", callback_data="back_to_main"))
+    m.add(_panel_button("✍️ اسم الزر + الرابط", callback_data="chat_cmd_button"))
+    m.add(_panel_button("🗑️ حذف الزر", callback_data="chat_cmd_button_clear"))
+    m.add(_panel_button("↩️ رجوع", callback_data="back_to_main"))
     return m
 
 def show_chat_commands(bot, call):
@@ -815,9 +815,9 @@ def _handle_callback_impl(bot, call):
         bot.answer_callback_query(call.id)
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
-            types.InlineKeyboardButton("📝 تعديل كتابة رسالة الحظر", callback_data="dev_assistant_button_text"),
-            types.InlineKeyboardButton("🔗 تعديل اسم الزر ورابطه", callback_data="dev_assistant_button_link"),
-            types.InlineKeyboardButton("🔙 رجوع للمساعدين", callback_data="dev_assistants"),
+            _panel_button("📝 تعديل كتابة رسالة الحظر", callback_data="dev_assistant_button_text"),
+            _panel_button("🔗 تعديل اسم الزر ورابطه", callback_data="dev_assistant_button_link"),
+            _panel_button("🔙 رجوع للمساعدين", callback_data="dev_assistants"),
         )
         bot.edit_message_text(
             "🔗 <b>إعدادات زر المساعد</b>\n\n"
@@ -882,11 +882,11 @@ def _handle_callback_impl(bot, call):
         markup = types.InlineKeyboardMarkup(row_width=1)
         for item in _ASSISTANT_POOL.slots_status():
             if item["configured"] and not item.get("managed_by_railway", False):
-                markup.add(types.InlineKeyboardButton(
+                markup.add(_panel_button(
                     f"🗑 حذف المساعد {item['slot']}",
                     callback_data=f"dev_assistant_remove:{item['slot']}"
                 ))
-        markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="dev_assistants"))
+        markup.add(_panel_button("🔙 رجوع", callback_data="dev_assistants"))
         bot.answer_callback_query(call.id)
         bot.edit_message_text(
             "اختر الحساب الذي تريد حذفه. حسابات Railway لا يمكن حذفها من اللوحة.",
@@ -1341,11 +1341,11 @@ def handle_input(bot, message):
             return True
         for item in _ASSISTANT_POOL.slots_status():
             if item["configured"]:
-                markup.add(types.InlineKeyboardButton(
+                markup.add(_panel_button(
                     f"🤖 تعيين المساعد {item['slot']}",
                     callback_data=f"dev_assistant_assign:{chat_id}:{item['slot']}"
                 ))
-        markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="dev_assistants"))
+        markup.add(_panel_button("🔙 رجوع", callback_data="dev_assistants"))
         bot.reply_to(message, f"اختر المساعد للمجموعة <code>{chat_id}</code>:", reply_markup=markup, parse_mode="HTML")
         return True
 
