@@ -398,8 +398,16 @@ def _audio_jat_markup():
     if not button_name or not button_url:
         return None
     keyboard = types.InlineKeyboardMarkup(row_width=1)
+    style = playback_button_style("jat_audio_button")
     kwargs = {"url": button_url}
-    button = _bot_button(button_name[:64], url=button_url, emoji_key="JAT_AUDIO_BUTTON")
+    if style:
+        kwargs["style"] = style
+    button = _bot_button(
+        button_name[:64],
+        url=button_url,
+        emoji_key="JAT_AUDIO_BUTTON",
+        **kwargs,
+    )
     keyboard.add(button)
     return keyboard
 
