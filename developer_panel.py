@@ -1223,6 +1223,30 @@ def handle_input(bot, message):
             bot.reply_to(message, "❌ الصيغة الصحيحة: اسم الزر : الرابط")
             return True
         name, url = parts
+        custom_emoji_id = None
+        colon = value.find(":")
+        colon_utf16 = len(value[:colon].encode("utf-16-le")) // 2
+        def _utf16_index(value, units):
+            total = 0
+            for index, char in enumerate(value):
+                if total >= units:
+                    return index
+                total += len(char.encode("utf-16-le")) // 2
+                if total >= units:
+                    return index + 1
+            return len(value)
+        for entity in (getattr(message, "entities", None) or []):
+            if getattr(entity, "type", None) != "custom_emoji":
+                continue
+            offset = int(getattr(entity, "offset", 0))
+            length = int(getattr(entity, "length", 0))
+            if offset + length <= colon_utf16:
+                custom_emoji_id = getattr(entity, "custom_emoji_id", None)
+                if custom_emoji_id:
+                    start = _utf16_index(value, offset)
+                    end = _utf16_index(value, offset + length)
+                    name = (value[:start] + value[end:colon]).strip()
+                    break
         if len(name) > 64 or len(url) > 2048:
             bot.reply_to(message, "❌ اسم الزر بحد أقصى 64 حرفاً والرابط 2048 حرفاً.")
             return True
@@ -1231,8 +1255,13 @@ def handle_input(bot, message):
             return True
         setting_set("ASSISTANT_BUTTON_NAME", name)
         setting_set("ASSISTANT_BUTTON_URL", url)
+        setting_set("EMOJI_BTN_ASSISTANT_BUTTON", str(custom_emoji_id or ""))
         pending_input_set(message.from_user.id, None)
-        bot.reply_to(message, "✅ تم حفظ زر المساعد ورابطه.")
+        bot.reply_to(
+            message,
+            "✅ تم حفظ زر المساعد والـPremium Emoji." if custom_emoji_id
+            else "✅ تم حفظ زر المساعد ورابطه بدون Premium Emoji.",
+        )
         return True
 
     if state == "waiting_assistant_phone":
