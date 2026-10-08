@@ -705,7 +705,6 @@ def playback_settings_markup():
     m = types.InlineKeyboardMarkup(row_width=1)
     m.add(_panel_button("✍️ الكتابة: الاسم + الرابط", callback_data="play_credit_pair"))
     m.add(_panel_button("🎵 زر الموسيقى: الاسم + الرابط", callback_data="play_music_pair"))
-    m.add(_panel_button("✨ Premium Emoji للأزرار", callback_data="play_custom_emoji"))
     m.add(_panel_button("🖼️ صورة لوحة التشغيل", callback_data="play_set_image"))
     m.add(_panel_button("🎨 ألوان أزرار لوحة التشغيل", callback_data="play_button_colors"))
     m.add(_panel_button("📝 أسماء أزرار التشغيل", callback_data="play_button_labels"))
@@ -1468,47 +1467,6 @@ def handle_input(bot, message):
             setting_set(f"PLAY_BTN_LABEL_{key}", "" if value.upper() == "DEFAULT" else value)
         pending_input_set(message.from_user.id, None)
         bot.reply_to(message, "✅ تم تحديث أسماء أزرار لوحة التشغيل.")
-        return True
-
-    if state == "play_custom_emoji":
-        if message.chat.type != "private":
-            bot.reply_to(message, "⛔ إعداد Premium Emoji يتم من الخاص فقط.")
-            return True
-
-        # Telegram delivers a Custom Emoji as a message entity. A custom-emoji
-        # sticker may also expose custom_emoji_id directly on message.sticker.
-        if (message.text or "").strip().upper() == "OFF":
-            setting_set("BUTTON_CUSTOM_EMOJI_ID", "")
-            pending_input_set(message.from_user.id, None)
-            bot.reply_to(message, "✅ تم إلغاء الـPremium Emoji من أزرار البوت.")
-            return True
-
-        custom_emoji_id = None
-        for entity in (getattr(message, "entities", None) or []):
-            if getattr(entity, "type", None) == "custom_emoji":
-                custom_emoji_id = getattr(entity, "custom_emoji_id", None)
-                if custom_emoji_id:
-                    break
-
-        sticker = getattr(message, "sticker", None)
-        if not custom_emoji_id and sticker is not None:
-            custom_emoji_id = getattr(sticker, "custom_emoji_id", None)
-
-        if not custom_emoji_id:
-            bot.reply_to(
-                message,
-                "❌ ما لقيت Premium Custom Emoji.\n"
-                "أرسل إيموجي مميز من قسم Custom Emoji، مو صورة أو GIF."
-            )
-            return True
-
-        setting_set("BUTTON_CUSTOM_EMOJI_ID", str(custom_emoji_id))
-        pending_input_set(message.from_user.id, None)
-        bot.reply_to(
-            message,
-            "✅ تم حفظ الـPremium Emoji.\n"
-            "سيظهر تلقائياً على أزرار لوحة المطور، أزرار التشغيل، والأزرار الموجودة تحت الأغنية."
-        )
         return True
 
     if state in {"play_credit_pair", "play_music_pair", "chat_cmd_button", "jat_audio_button", "jat_audio_credit"}:
