@@ -691,11 +691,54 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
 
     @bot.message_handler(commands=["admin", "panel", "dev"])
     def admin_handler(message):
-        save_user(message.from_user); save_chat(message.chat)
-        if not admin_can(message.from_user.id):
-            bot.reply_to(message, "❌ هذا الأمر مخصص للمطور والمشرفين فقط.")
-            return
-        bot.send_message(message.chat.id, admin_text(), reply_markup=developer_markup())
+        """Open the developer/admin panel with an explicit diagnostic on failure."""
+        try:
+            save_user(message.from_user)
+            save_chat(message.chat)
+
+            user_id = getattr(getattr(message, "from_user", None), "id", None)
+            if user_id is None:
+                bot.reply_to(message, "❌ تعذر تحديد حسابك.")
+                return
+
+            if not admin_can(int(user_id)):
+                log.warning(
+                    "Admin panel denied: user_id=%s developer_id=%s chat_id=%s",
+                    user_id, DEVELOPER_ID, getattr(message.chat, "id", None),
+                )
+                bot.reply_to(
+                    message,
+                    "❌ هذا الأمر مخصص للمطور والمشرفين فقط.\n"
+                    f"🆔 ID حسابك: <code>{int(user_id)}</code>",
+                    parse_mode="HTML",
+                )
+                return
+
+            # Build the markup before sending, so any UI/configuration error
+            # gets reported instead of making /admin appear to do nothing.
+            text = admin_text()
+            markup = developer_markup()
+            bot.send_message(
+                message.chat.id,
+                text,
+                reply_markup=markup,
+                parse_mode="HTML",
+            )
+        except Exception as exc:
+            log.exception(
+                "Admin panel failed: user_id=%s chat_id=%s",
+                getattr(getattr(message, "from_user", None), "id", None),
+                getattr(message.chat, "id", None),
+            )
+            try:
+                bot.reply_to(
+                    message,
+                    "❌ تعذر فتح لوحة الأدمن حالياً.\n"
+                    f"الخطأ: <code>{type(exc).__name__}: {exc}</code>",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
 
     def _assistant_banned_message(message) -> bool:
         """Stop playback only when Telegram explicitly says the assistant is banned."""
