@@ -3,7 +3,7 @@ from __future__ import annotations
 from database import subscriptions, setting_get
 
 
-def types.InlineKeyboardButton(text, *args, emoji_key=None, **kwargs):
+def _subscription_button(text, *args, emoji_key=None, **kwargs):
     key = emoji_key or str(kwargs.get("callback_data") or text).split(":", 1)[0].upper().replace("-", "_")
     emoji_id = (setting_get(f"EMOJI_BTN_{key}") or "").strip()
     if emoji_id:
