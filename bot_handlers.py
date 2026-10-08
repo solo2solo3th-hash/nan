@@ -269,6 +269,12 @@ def user_can_play(message, permission: str = "playback") -> bool:
     return True
 
 
+def _custom_button_emoji_id() -> str | None:
+    """Return the developer-selected Premium Custom Emoji for bot buttons."""
+    value = (setting_get("BUTTON_CUSTOM_EMOJI_ID") or "").strip()
+    return value or None
+
+
 def playback_button_style(key: str) -> str | None:
     """Return a supported Telegram semantic style, if configured."""
     value = (setting_get(f"PLAY_BTN_COLOR_{key.upper()}") or "default").strip().lower()
@@ -285,12 +291,23 @@ def _playback_button(text: str, callback_data: str | None = None,
         kwargs["url"] = url
 
     style = playback_button_style(style_key) if style_key else None
+    custom_emoji_id = _custom_button_emoji_id()
+    if custom_emoji_id:
+        kwargs["icon_custom_emoji_id"] = custom_emoji_id
     if style:
         try:
             return types.InlineKeyboardButton(text, style=style, **kwargs)
         except TypeError:
-            log.warning("Installed pyTelegramBotAPI does not support inline button styles; using default style")
-    return types.InlineKeyboardButton(text, **kwargs)
+            kwargs.pop("icon_custom_emoji_id", None)
+            try:
+                return types.InlineKeyboardButton(text, style=style, **kwargs)
+            except TypeError:
+                log.warning("Installed pyTelegramBotAPI does not support inline button styles; using default style")
+    try:
+        return types.InlineKeyboardButton(text, **kwargs)
+    except TypeError:
+        kwargs.pop("icon_custom_emoji_id", None)
+        return types.InlineKeyboardButton(text, **kwargs)
 
 
 def playback_controls():
@@ -337,17 +354,10 @@ def _playback_text(track: Track | None) -> str:
         return "⏹️ انتهت قائمة التشغيل."
 
     title = escape(str(track.title))
-    rich_text = (setting_get("PLAY_RICH_TEXT_HTML") or "").strip()
-    if rich_text:
-        text = (
-            f"{rich_text}\n"
-            f"مدة التشغيل: {duration_text(track.duration)}"
-        )
-    else:
-        text = (
-            f"حبيب ياسر شغنالك: {title}\n"
-            f"مدة التشغيل: {duration_text(track.duration)}"
-        )
+    text = (
+        f"حبيب ياسر شغنالك: {title}\n"
+        f"مدة التشغيل: {duration_text(track.duration)}"
+    )
     # Optional clickable credit line below the duration, configured by the developer.
     credit = (setting_get("PLAY_CREDIT_NAME") or "").strip()
     credit_url = (setting_get("PLAY_CREDIT_URL") or "").strip()
@@ -368,7 +378,7 @@ def _audio_jat_markup():
         return None
     keyboard = types.InlineKeyboardMarkup(row_width=1)
     kwargs = {"url": button_url}
-    button = types.InlineKeyboardButton(button_name[:64], **kwargs)
+    button = _playback_button(button_name[:64], url=button_url, style_key="custom1")
     keyboard.add(button)
     return keyboard
 
