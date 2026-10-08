@@ -179,6 +179,7 @@ def init_db() -> None:
             "ASSISTANT_BLOCKED_TEXT": "حبيب نينو فك الحظر عن المساعد ❤️",
             "ASSISTANT_BUTTON_NAME": "",
             "ASSISTANT_BUTTON_URL": "",
+            "BUTTON_CUSTOM_EMOJI_ID": "",
         }
         con.executemany(
             "INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", defaults.items()
