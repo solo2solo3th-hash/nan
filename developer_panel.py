@@ -637,6 +637,7 @@ def playback_settings_markup():
     m = types.InlineKeyboardMarkup(row_width=1)
     m.add(types.InlineKeyboardButton("✍️ الكتابة: الاسم + الرابط", callback_data="play_credit_pair"))
     m.add(types.InlineKeyboardButton("🎵 زر الموسيقى: الاسم + الرابط", callback_data="play_music_pair"))
+    m.add(types.InlineKeyboardButton("✨ الملصق المميز للأزرار", callback_data="play_custom_emoji"))
     m.add(types.InlineKeyboardButton("🖼️ صورة لوحة التشغيل", callback_data="play_set_image"))
     m.add(types.InlineKeyboardButton("🎨 ألوان أزرار لوحة التشغيل", callback_data="play_button_colors"))
     m.add(types.InlineKeyboardButton("📝 أسماء أزرار التشغيل", callback_data="play_button_labels"))
@@ -747,13 +748,16 @@ def show_playback_settings(bot, call):
     music_name = setting_get("PLAY_MUSIC_BUTTON_NAME") or "غير محدد"
     music_url = setting_get("PLAY_MUSIC_BUTTON_URL") or "غير محدد"
     image_type = setting_get("PLAY_IMAGE_TYPE") or "photo"
+    custom_emoji = setting_get("BUTTON_CUSTOM_EMOJI_ID") or ""
+    custom_emoji_status = "مفعل ✨" if custom_emoji else "غير مفعل"
     bot.edit_message_text(
         "🎛️ <b>لوحة التشغيل</b>\n\n"
         f"✍️ الكتابة: <code>{credit_name}</code>\n"
         f"🔗 الرابط: <code>{credit_url}</code>\n"
         f"🎵 زر الموسيقى: <code>{music_name}</code>\n"
         f"🔗 الرابط: <code>{music_url}</code>\n"
-        f"🖼️ الصورة: <code>{image_type}</code>",
+        f"🖼️ الصورة: <code>{image_type}</code>\n"
+        f"✨ Premium Emoji للأزرار: <b>{custom_emoji_status}</b>",
         call.message.chat.id, call.message.message_id,
         reply_markup=playback_settings_markup(), parse_mode="HTML"
     )
@@ -1081,6 +1085,15 @@ def _handle_callback_impl(bot, call):
         bot.answer_callback_query(call.id)
         begin_playback_input(bot, call, "play_music_pair", "🎵 أرسل بالصيغة: <code>اسم الزر : الرابط</code>")
         return True
+    if data == "play_custom_emoji":
+        bot.answer_callback_query(call.id)
+        begin_playback_input(
+            bot, call, "play_custom_emoji",
+            "✨ أرسل الآن Premium Custom Emoji واحد فقط.\n"
+            "لا تحتاج ترسل ID؛ البوت يستخرجه ويحفظه تلقائياً.\n"
+            "لإزالة الإيموجي المميز أرسل: <code>OFF</code>"
+        )
+        return True
     if data == "play_set_image":
         bot.answer_callback_query(call.id)
         begin_playback_input(bot, call, "play_set_image", "🖼️ أرسل صورة أو GIF لوحة التشغيل:")
@@ -1355,6 +1368,47 @@ def handle_input(bot, message):
             setting_set(f"PLAY_BTN_LABEL_{key}", "" if value.upper() == "DEFAULT" else value)
         pending_input_set(message.from_user.id, None)
         bot.reply_to(message, "✅ تم تحديث أسماء أزرار لوحة التشغيل.")
+        return True
+
+    if state == "play_custom_emoji":
+        if message.chat.type != "private":
+            bot.reply_to(message, "⛔ إعداد Premium Emoji يتم من الخاص فقط.")
+            return True
+
+        # Telegram delivers a Custom Emoji as a message entity. A custom-emoji
+        # sticker may also expose custom_emoji_id directly on message.sticker.
+        if (message.text or "").strip().upper() == "OFF":
+            setting_set("BUTTON_CUSTOM_EMOJI_ID", "")
+            pending_input_set(message.from_user.id, None)
+            bot.reply_to(message, "✅ تم إلغاء الـPremium Emoji من أزرار البوت.")
+            return True
+
+        custom_emoji_id = None
+        for entity in (getattr(message, "entities", None) or []):
+            if getattr(entity, "type", None) == "custom_emoji":
+                custom_emoji_id = getattr(entity, "custom_emoji_id", None)
+                if custom_emoji_id:
+                    break
+
+        sticker = getattr(message, "sticker", None)
+        if not custom_emoji_id and sticker is not None:
+            custom_emoji_id = getattr(sticker, "custom_emoji_id", None)
+
+        if not custom_emoji_id:
+            bot.reply_to(
+                message,
+                "❌ ما لقيت Premium Custom Emoji.\n"
+                "أرسل إيموجي مميز من قسم Custom Emoji، مو صورة أو GIF."
+            )
+            return True
+
+        setting_set("BUTTON_CUSTOM_EMOJI_ID", str(custom_emoji_id))
+        pending_input_set(message.from_user.id, None)
+        bot.reply_to(
+            message,
+            "✅ تم حفظ الـPremium Emoji.\n"
+            "سيظهر تلقائياً قبل كتابة أزرار لوحة التشغيل والزر الموجود تحت الأغنية."
+        )
         return True
 
     if state in {"play_credit_pair", "play_music_pair", "chat_cmd_button", "jat_audio_button", "jat_audio_credit"}:
