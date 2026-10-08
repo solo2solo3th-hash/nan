@@ -241,9 +241,9 @@ def _mandatory_subscription_wall(bot, message) -> bool:
     title = str(first[1] or "القناة المطلوبة")
     url = str(first[3] or "").strip()
     if url:
-        keyboard.add(types.InlineKeyboardButton(f"🟣 {title}", url=url))
+        keyboard.add(_bot_button(f"🟣 {title}", url=url))
 
-    keyboard.add(types.InlineKeyboardButton("✅ تحققت من الاشتراك", callback_data="sub_check"))
+    keyboard.add(_bot_button("✅ تحققت من الاشتراك", callback_data="sub_check"))
     bot.reply_to(
         message,
         "تروحح فدوة لياسر ❤️\n"
@@ -267,6 +267,18 @@ def user_can_play(message, permission: str = "playback") -> bool:
         permission = "playback" if permission not in PERMISSIONS else permission
         return admin_can(user_id, permission)
     return True
+
+
+def _bot_button(text, *args, **kwargs):
+    """Create any bot inline button with the selected Premium Custom Emoji icon."""
+    custom_emoji_id = _custom_button_emoji_id()
+    if custom_emoji_id:
+        kwargs["icon_custom_emoji_id"] = custom_emoji_id
+    try:
+        return types.InlineKeyboardButton(text, *args, **kwargs)
+    except TypeError:
+        kwargs.pop("icon_custom_emoji_id", None)
+        return types.InlineKeyboardButton(text, *args, **kwargs)
 
 
 def _custom_button_emoji_id() -> str | None:
@@ -296,18 +308,18 @@ def _playback_button(text: str, callback_data: str | None = None,
         kwargs["icon_custom_emoji_id"] = custom_emoji_id
     if style:
         try:
-            return types.InlineKeyboardButton(text, style=style, **kwargs)
+            return _bot_button(text, style=style, **kwargs)
         except TypeError:
             kwargs.pop("icon_custom_emoji_id", None)
             try:
-                return types.InlineKeyboardButton(text, style=style, **kwargs)
+                return _bot_button(text, style=style, **kwargs)
             except TypeError:
                 log.warning("Installed pyTelegramBotAPI does not support inline button styles; using default style")
     try:
-        return types.InlineKeyboardButton(text, **kwargs)
+        return _bot_button(text, **kwargs)
     except TypeError:
         kwargs.pop("icon_custom_emoji_id", None)
-        return types.InlineKeyboardButton(text, **kwargs)
+        return _bot_button(text, **kwargs)
 
 
 def playback_controls():
@@ -464,7 +476,7 @@ async def _stream_end(bot, calls: VoiceCallRunner, player: MusicPlayer, chat_id:
 def _set_pending_from_callback(call, mode: str, prompt: str, bot) -> None:
     set_pending(call.from_user.id, mode, call.message.chat.id, call.message.message_id)
     back = types.InlineKeyboardMarkup()
-    back.add(types.InlineKeyboardButton("↩️ رجوع", callback_data="adm_home"))
+    back.add(_bot_button("↩️ رجوع", callback_data="adm_home"))
     bot.edit_message_text(prompt, call.message.chat.id, call.message.message_id, reply_markup=back)
 
 
@@ -649,7 +661,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                 markup = None
                 if button_name and button_url:
                     markup = types.InlineKeyboardMarkup()
-                    markup.add(types.InlineKeyboardButton(button_name, url=button_url))
+                    markup.add(_bot_button(button_name, url=button_url))
                 bot.reply_to(
                     message,
                     "🚫 " + notice,
@@ -852,7 +864,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
         keyboard = types.InlineKeyboardMarkup(row_width=1)
         if name and url:
             keyboard.add(
-                types.InlineKeyboardButton(
+                _bot_button(
                     name[:64],
                     url=url,
                 )
@@ -1161,8 +1173,8 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                 url = str(first[3] or "").strip()
                 title = str(first[1] or "القناة المطلوبة")
                 if url:
-                    keyboard.add(types.InlineKeyboardButton(f"🟣 {title}", url=url))
-                keyboard.add(types.InlineKeyboardButton("✅ تحققت من الاشتراك", callback_data="sub_check"))
+                    keyboard.add(_bot_button(f"🟣 {title}", url=url))
+                keyboard.add(_bot_button("✅ تحققت من الاشتراك", callback_data="sub_check"))
                 bot.answer_callback_query(call.id, "❌ ما زال الاشتراك مطلوباً.", show_alert=True)
                 try:
                     bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=keyboard)
