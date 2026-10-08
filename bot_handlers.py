@@ -399,7 +399,7 @@ def _audio_jat_markup():
         return None
     keyboard = types.InlineKeyboardMarkup(row_width=1)
     style = playback_button_style("jat_audio_button")
-    kwargs = {"url": button_url}
+    kwargs = {}
     if style:
         kwargs["style"] = style
     button = _bot_button(
