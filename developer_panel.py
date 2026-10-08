@@ -54,87 +54,6 @@ PERMISSION_LABELS = {
     "playback": "🎵 التحكم بالتشغيل",
 }
 
-def _panel_emoji_key(callback_data=None, fallback=None):
-    raw = str(callback_data or fallback or "").strip()
-    return raw.split(":", 1)[0].upper().replace("-", "_")
-
-
-def _panel_button(text, *args, emoji_key=None, **kwargs):
-    """Create a developer-panel button with its own independent Premium Custom Emoji."""
-    callback_data = kwargs.get("callback_data")
-    key = emoji_key or _panel_emoji_key(callback_data, text)
-    custom_emoji_id = (setting_get(f"EMOJI_BTN_{key}") or "").strip()
-    if custom_emoji_id:
-        kwargs["icon_custom_emoji_id"] = custom_emoji_id
-    try:
-        return types.InlineKeyboardButton(text, *args, **kwargs)
-    except TypeError:
-        kwargs.pop("icon_custom_emoji_id", None)
-        return types.InlineKeyboardButton(text, *args, **kwargs)
-
-
-_EMOJI_TARGETS = [
-    ("music_skip", "⏭️ تخطي"),
-    ("music_stop", "⏹️ إنهاء"),
-    ("music_pause", "⏸️ إيقاف"),
-    ("music_rewind_10", "⏪ ترجيع"),
-    ("music_resume", "▶️ تشغيل"),
-    ("music_forward_10", "⏩ تقديم"),
-    ("music_top", "🔝 الأعلى"),
-    ("PLAY_MUSIC_BUTTON", "🎵 زر الموسيقى"),
-    ("JAT_AUDIO_BUTTON", "🔘 زر تحت الملف الصوتي"),
-    ("JAT_AUDIO_CREDIT", "📝 الكتابة تحت/بجانب الملف"),
-    ("PLAY_CREDIT", "✍️ كتابة لوحة التشغيل"),
-    ("ASSISTANT_BUTTON", "🤖 زر المساعد"),
-    ("CUSTOM_BTN1", "🔘 زر /start الأول"),
-    ("CUSTOM_BTN2", "🔘 زر /start الثاني"),
-    ("set_start_text", "📝 نص /start"),
-    ("set_start_image", "🖼️ صورة /start"),
-    ("set_btn1", "⚙️ إعداد الزر الأول"),
-    ("set_btn2", "⚙️ إعداد الزر الثاني"),
-    ("user_ban", "🚫 حظر مستخدم"),
-    ("user_unban", "✅ رفع الحظر"),
-    ("user_banned", "📋 المحظورون"),
-    ("sub_add", "➕ إضافة اشتراك"),
-    ("sub_remove", "🗑️ حذف اشتراك"),
-    ("sub_list", "📋 القنوات"),
-    ("sub_toggle", "🔛 تشغيل/إيقاف الإجباري"),
-    ("sub_check", "✅ تحقق من الاشتراك"),
-    ("dev_stats", "📊 الإحصائيات"),
-    ("dev_broadcast_menu", "📣 الإذاعة"),
-    ("dev_admins_menu", "👨‍💻 المشرفين"),
-    ("dev_forced_sub", "🔒 الاشتراك الإجباري"),
-    ("dev_rights", "🔐 الحقوق"),
-    ("dev_playback_settings", "🎛️ لوحة التشغيل"),
-    ("dev_chat_commands", "💬 أوامر الشات"),
-    ("dev_assistants", "👥 المساعدين"),
-    ("adm_user_panel", "👤 لوحة الخاص"),
-    ("close_menu", "❌ إغلاق"),
-    ("back_to_main", "↩️ رجوع"),
-]
-
-
-def premium_emoji_menu_markup():
-    m = types.InlineKeyboardMarkup(row_width=1)
-    for key, label in _EMOJI_TARGETS:
-        current = "✨" if (setting_get(f"EMOJI_BTN_{key}") or "").strip() else "▫️"
-        m.add(_panel_button(f"{current} {label}", callback_data=f"emoji_pick:{key}"))
-    m.add(_panel_button("↩️ رجوع", callback_data="back_to_main"))
-    return m
-
-
-def show_premium_emoji_menu(bot, call):
-    bot.edit_message_text(
-        "✨ <b>Premium Custom Emoji — تخصيص مستقل</b>\n\n"
-        "اختر المكان، ثم أرسل Premium Custom Emoji الذي تريده لهذا المكان فقط.\n"
-        "كل زر/كتابة لها إعداد مستقل ولا تؤثر على غيرها.",
-        call.message.chat.id, call.message.message_id,
-        reply_markup=premium_emoji_menu_markup(), parse_mode="HTML"
-    )
-
-
-
-
 def pending_input_set(user_id: int, state: str | None) -> None:
     if state is None:
         clear_pending(user_id)
@@ -180,7 +99,6 @@ def main_markup():
         _panel_button("🎛️ لوحة التشغيل", callback_data="dev_playback_settings"),
     )
     m.add(_panel_button("💬 أوامر الشات", callback_data="dev_chat_commands"))
-    m.add(_panel_button("✨ تخصيص Premium Emoji", callback_data="dev_premium_emojis"))
     m.add(_panel_button("👥 المساعدين", callback_data="dev_assistants"))
     m.add(
         _panel_button("👤 لوحة الخاص", callback_data="adm_user_panel"),
@@ -1016,24 +934,6 @@ def _handle_callback_impl(bot, call):
             bot.answer_callback_query(call.id, f"تعذر التبديل: {exc}", show_alert=True)
         show_assistants_menu(bot, call)
         return True
-    if data == "dev_premium_emojis":
-        bot.answer_callback_query(call.id)
-        show_premium_emoji_menu(bot, call)
-        return True
-    if data.startswith("emoji_pick:"):
-        key = data.split(":", 1)[1].strip()
-        if not any(item[0] == key for item in _EMOJI_TARGETS):
-            bot.answer_callback_query(call.id, "المكان غير معروف.", show_alert=True)
-            return True
-        pending_input_set(call.from_user.id, f"emoji:{key}")
-        bot.answer_callback_query(call.id)
-        bot.edit_message_text(
-            "✨ أرسل الآن Premium Custom Emoji لهذا المكان فقط.\n"
-            "OFF = إزالة الـPremium Emoji عن هذا المكان.",
-            call.message.chat.id, call.message.message_id,
-            reply_markup=cancel_markup("dev_premium_emojis")
-        )
-        return True
     if data == "dev_stats":
         bot.answer_callback_query(call.id); show_statistics(bot, call); return True
     if data == "dev_broadcast_menu":
@@ -1443,29 +1343,6 @@ def handle_input(bot, message):
     if state == "waiting_fs_channel":
         return add_forced_channel_from_message(bot, message)
 
-    if state.startswith("emoji:"):
-        key = state.split(":", 1)[1].strip()
-        if message.chat.type != "private":
-            bot.reply_to(message, "⛔ تخصيص Premium Emoji يتم من الخاص فقط.")
-            return True
-        if (message.text or "").strip().upper() == "OFF":
-            setting_set(f"EMOJI_BTN_{key}", "")
-            pending_input_set(message.from_user.id, None)
-            bot.reply_to(message, "✅ تمت إزالة Premium Emoji من هذا المكان.")
-            return True
-        custom_emoji_id = None
-        for entity in (getattr(message, "entities", None) or []):
-            if getattr(entity, "type", None) == "custom_emoji" and getattr(entity, "custom_emoji_id", None):
-                custom_emoji_id = getattr(entity, "custom_emoji_id")
-                break
-        if not custom_emoji_id:
-            bot.reply_to(message, "❌ أرسل Premium Custom Emoji حقيقي فقط.")
-            return True
-        setting_set(f"EMOJI_BTN_{key}", str(custom_emoji_id))
-        pending_input_set(message.from_user.id, None)
-        bot.reply_to(message, "✅ تم حفظ Premium Emoji لهذا المكان فقط.")
-        return True
-
     if state == "play_button_labels":
         raw = (message.text or "").strip()
         parts = [part.strip() for part in raw.split("|")]
@@ -1484,6 +1361,91 @@ def handle_input(bot, message):
         return True
 
     if state in {"play_credit_pair", "play_music_pair", "chat_cmd_button", "jat_audio_button", "jat_audio_credit"}:
+        raw = message.text or ""
+        colon = raw.find(":")
+        if colon < 0:
+            bot.reply_to(message, "❌ الصيغة الصحيحة: اسم الزر + Premium Emoji : الرابط")
+            return True
+
+        name_raw = raw[:colon].strip()
+        url = raw[colon + 1:].strip()
+
+        # Telegram custom emoji entities use UTF-16 offsets. Extract the real
+        # custom_emoji_id from the name and remove only its visible character
+        # because Telegram will render it as the button icon externally.
+        def _utf16_to_index(value, units):
+            total = 0
+            for index, char in enumerate(value):
+                if total >= units:
+                    return index
+                total += len(char.encode("utf-16-le")) // 2
+                if total >= units:
+                    return index + 1
+            return len(value)
+
+        custom_emoji_id = None
+        remove_start = remove_end = None
+        for entity in (getattr(message, "entities", None) or []):
+            if getattr(entity, "type", None) != "custom_emoji":
+                continue
+            offset = int(getattr(entity, "offset", 0))
+            length = int(getattr(entity, "length", 0))
+            end = offset + length
+            if end <= colon:
+                custom_emoji_id = getattr(entity, "custom_emoji_id", None)
+                if custom_emoji_id:
+                    remove_start = _utf16_to_index(raw, offset)
+                    remove_end = _utf16_to_index(raw, end)
+                    break
+
+        if remove_start is not None and remove_end is not None:
+            name_raw = (raw[:remove_start] + raw[remove_end:colon]).strip()
+
+        if not name_raw or not url:
+            bot.reply_to(message, "❌ أرسل اسم الزر والرابط.")
+            return True
+        if len(name_raw) > 64:
+            bot.reply_to(message, "❌ اسم الزر يجب ألا يتجاوز 64 حرفاً.")
+            return True
+        if len(url) > 2048:
+            bot.reply_to(message, "❌ الرابط طويل جداً (الحد 2048 حرفاً).")
+            return True
+        if not url.startswith(("https://", "http://", "tg://")):
+            bot.reply_to(message, "❌ الرابط يجب أن يبدأ بـ https:// أو http:// أو tg://")
+            return True
+
+        emoji_key = {
+            "play_credit_pair": "PLAY_CREDIT",
+            "play_music_pair": "PLAY_MUSIC_BUTTON",
+            "chat_cmd_button": "CHAT_COMMANDS_BUTTON",
+            "jat_audio_button": "JAT_AUDIO_BUTTON",
+            "jat_audio_credit": "JAT_AUDIO_CREDIT",
+        }[state]
+
+        if state == "play_credit_pair":
+            setting_set("PLAY_CREDIT_NAME", name_raw)
+            setting_set("PLAY_CREDIT_URL", url)
+        elif state == "play_music_pair":
+            setting_set("PLAY_MUSIC_BUTTON_NAME", name_raw)
+            setting_set("PLAY_MUSIC_BUTTON_URL", url)
+        elif state == "jat_audio_button":
+            setting_set("JAT_AUDIO_BUTTON_NAME", name_raw)
+            setting_set("JAT_AUDIO_BUTTON_URL", url)
+        elif state == "jat_audio_credit":
+            setting_set("JAT_AUDIO_CREDIT_NAME", name_raw)
+            setting_set("JAT_AUDIO_CREDIT_URL", url)
+        else:
+            setting_set("CHAT_COMMANDS_BUTTON_NAME", name_raw)
+            setting_set("CHAT_COMMANDS_BUTTON_URL", url)
+
+        setting_set(f"EMOJI_BTN_{emoji_key}", str(custom_emoji_id or ""))
+        pending_input_set(message.from_user.id, None)
+        if custom_emoji_id:
+            bot.reply_to(message, "✅ تم حفظ الاسم والرابط والـPremium Emoji لهذا المكان فقط.")
+        else:
+            bot.reply_to(message, "✅ تم حفظ الاسم والرابط بدون Premium Emoji.")
+        return True
+
         text = (message.text or "").strip()
         parts = [part.strip() for part in text.split(":", 1)]
         if len(parts) != 2 or not parts[0] or not parts[1]:
