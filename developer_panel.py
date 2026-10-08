@@ -1398,13 +1398,15 @@ def handle_input(bot, message):
 
         custom_emoji_id = None
         remove_start = remove_end = None
+        # Telegram entity offsets are UTF-16 based; colon is a Python character index.
+        colon_utf16 = len(raw[:colon].encode("utf-16-le")) // 2
         for entity in (getattr(message, "entities", None) or []):
             if getattr(entity, "type", None) != "custom_emoji":
                 continue
             offset = int(getattr(entity, "offset", 0))
             length = int(getattr(entity, "length", 0))
             end = offset + length
-            if end <= colon:
+            if end <= colon_utf16:
                 custom_emoji_id = getattr(entity, "custom_emoji_id", None)
                 if custom_emoji_id:
                     remove_start = _utf16_to_index(raw, offset)
