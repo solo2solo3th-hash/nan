@@ -339,32 +339,32 @@ def playback_controls():
         return configured[:64] if configured else default
 
     keyboard.row(
-        _playback_button(label("skip", "⏭️ تخطي"), callback_data="music_skip", style_key="music_skip"),
-        _playback_button(label("stop", "⏹️ إنهاء"), callback_data="music_stop", style_key="music_stop"),
-        _playback_button(label("pause", "⏸️ إيقاف"), callback_data="music_pause", style_key="music_pause"),
+        _playback_button(label("skip", "⏭️ تخطي"), callback_data="music_skip", style_key="skip"),
+        _playback_button(label("stop", "⏹️ إنهاء"), callback_data="music_stop", style_key="stop"),
+        _playback_button(label("pause", "⏸️ إيقاف"), callback_data="music_pause", style_key="pause"),
     )
 
     # Row 2: rewind / resume / forward. Labels are configurable from developer panel.
     keyboard.row(
-        _playback_button(label("rewind", "-10s"), callback_data="music_rewind_10", style_key="music_rewind_10"),
-        _playback_button(label("resume", "▶️"), callback_data="music_resume", style_key="music_resume"),
-        _playback_button(label("forward", "+10s"), callback_data="music_forward_10", style_key="music_forward_10"),
+        _playback_button(label("rewind", "-10s"), callback_data="music_rewind_10", style_key="rewind"),
+        _playback_button(label("resume", "▶️"), callback_data="music_resume", style_key="resume"),
+        _playback_button(label("forward", "+10s"), callback_data="music_forward_10", style_key="forward"),
     )
 
     # Prefer the current developer-panel setting, while retaining legacy settings.
     btn1_name = (setting_get("PLAY_MUSIC_BUTTON_NAME") or setting_get("CUSTOM_BTN1_NAME") or "").strip()
     btn1_url = (setting_get("PLAY_MUSIC_BUTTON_URL") or setting_get("CUSTOM_BTN1_URL") or "").strip()
     if btn1_name and btn1_url:
-        keyboard.row(_playback_button(btn1_name[:64], url=btn1_url, style_key="PLAY_MUSIC_BUTTON"))
+        keyboard.row(_playback_button(btn1_name[:64], url=btn1_url, style_key="custom1"))
 
     # Row 4: developer-configured custom button #2
     btn2_name = (setting_get("CUSTOM_BTN2_NAME") or "").strip()
     btn2_url = (setting_get("CUSTOM_BTN2_URL") or "").strip()
     if btn2_name and btn2_url:
-        keyboard.row(_playback_button(btn2_name[:64], url=btn2_url, style_key="PLAY_CUSTOM_BTN2"))
+        keyboard.row(_playback_button(btn2_name[:64], url=btn2_url, style_key="custom2"))
 
     # Bottom row: requested top button.
-    keyboard.row(_playback_button(label("top", "🔝"), callback_data="music_top", style_key="music_top"))
+    keyboard.row(_playback_button(label("top", "🔝"), callback_data="music_top", style_key="top"))
     return keyboard
 
 
