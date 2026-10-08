@@ -6,23 +6,35 @@ from database import has_permission, is_banned, save_chat, save_user, set_pendin
 from subscriptions import show_subscription_wall
 
 
+def types.InlineKeyboardButton(text, *args, emoji_key=None, **kwargs):
+    key = emoji_key or str(kwargs.get("callback_data") or text).split(":", 1)[0].upper().replace("-", "_")
+    emoji_id = (setting_get(f"EMOJI_BTN_{key}") or "").strip()
+    if emoji_id:
+        kwargs["icon_custom_emoji_id"] = emoji_id
+    try:
+        return types.InlineKeyboardButton(text, *args, **kwargs)
+    except TypeError:
+        kwargs.pop("icon_custom_emoji_id", None)
+        return types.InlineKeyboardButton(text, *args, **kwargs)
+
+
 def user_panel_settings_markup():
     keyboard = types.InlineKeyboardMarkup(row_width=1)
-    keyboard.add(types.InlineKeyboardButton("📝 نص /start", callback_data="set_start_text"))
-    keyboard.add(types.InlineKeyboardButton("🖼️ صورة /start", callback_data="set_start_image"))
-    keyboard.add(types.InlineKeyboardButton("⚙️ الزر الأول", callback_data="set_btn1"))
-    keyboard.add(types.InlineKeyboardButton("⚙️ الزر الثاني", callback_data="set_btn2"))
-    keyboard.add(types.InlineKeyboardButton("↩️ الرئيسية", callback_data="adm_home"))
+    keyboard.add(_member_button("📝 نص /start", callback_data="set_start_text"))
+    keyboard.add(_member_button("🖼️ صورة /start", callback_data="set_start_image"))
+    keyboard.add(_member_button("⚙️ الزر الأول", callback_data="set_btn1"))
+    keyboard.add(_member_button("⚙️ الزر الثاني", callback_data="set_btn2"))
+    keyboard.add(_member_button("↩️ الرئيسية", callback_data="adm_home"))
     return keyboard
 
 
 def start_markup(bot_username: str):
     keyboard = types.InlineKeyboardMarkup(row_width=1)
-    keyboard.add(types.InlineKeyboardButton("➕ أضفني إلى مجموعتك أو قناتك", url=f"https://t.me/{bot_username}?startgroup=true"))
+    keyboard.add(_member_button("➕ أضفني إلى مجموعتك أو قناتك", url=f"https://t.me/{bot_username}?startgroup=true"))
     for name_key, url_key in (("CUSTOM_BTN1_NAME", "CUSTOM_BTN1_URL"), ("CUSTOM_BTN2_NAME", "CUSTOM_BTN2_URL")):
         name, url = setting_get(name_key), setting_get(url_key)
         if name and url and url.startswith(("https://", "http://", "tg://")):
-            keyboard.add(types.InlineKeyboardButton(name, url=url))
+            keyboard.add(_member_button(name, url=url))
     return keyboard
 
 
@@ -60,6 +72,6 @@ def handle_user_panel_callback(bot, call, alert) -> bool:
     prompts = {"set_start_text":"📝 أرسل النص الجديد لرسالة /start:", "set_start_image":"🖼️ أرسل الصورة أو GIF الجديدة:", "set_btn1":"⚙️ أرسل: اسم الزر | الرابط", "set_btn2":"⚙️ أرسل: اسم الزر | الرابط"}
     set_pending(call.from_user.id, modes[data], call.message.chat.id, call.message.message_id)
     back = types.InlineKeyboardMarkup()
-    back.add(types.InlineKeyboardButton("↩️ رجوع", callback_data="adm_user_panel"))
+    back.add(_member_button("↩️ رجوع", callback_data="adm_user_panel"))
     bot.edit_message_text(prompts[data], call.message.chat.id, call.message.message_id, reply_markup=back)
     return True
