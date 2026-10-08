@@ -753,7 +753,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                 markup = None
                 if button_name and button_url:
                     markup = types.InlineKeyboardMarkup()
-                    markup.add(_bot_button(button_name, url=button_url))
+                    markup.add(_bot_button(button_name, url=button_url, emoji_key="ASSISTANT_BUTTON"))
                 bot.reply_to(
                     message,
                     "🚫 " + notice,
