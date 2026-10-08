@@ -637,7 +637,7 @@ def playback_settings_markup():
     m = types.InlineKeyboardMarkup(row_width=1)
     m.add(types.InlineKeyboardButton("✍️ الكتابة: الاسم + الرابط", callback_data="play_credit_pair"))
     m.add(types.InlineKeyboardButton("🎵 زر الموسيقى: الاسم + الرابط", callback_data="play_music_pair"))
-    m.add(types.InlineKeyboardButton("✨ الملصق المميز للأزرار", callback_data="play_custom_emoji"))
+    m.add(types.InlineKeyboardButton("✨ كتابة مميزة (Premium Emoji)", callback_data="play_rich_text"))
     m.add(types.InlineKeyboardButton("🖼️ صورة لوحة التشغيل", callback_data="play_set_image"))
     m.add(types.InlineKeyboardButton("🎨 ألوان أزرار لوحة التشغيل", callback_data="play_button_colors"))
     m.add(types.InlineKeyboardButton("📝 أسماء أزرار التشغيل", callback_data="play_button_labels"))
@@ -748,8 +748,8 @@ def show_playback_settings(bot, call):
     music_name = setting_get("PLAY_MUSIC_BUTTON_NAME") or "غير محدد"
     music_url = setting_get("PLAY_MUSIC_BUTTON_URL") or "غير محدد"
     image_type = setting_get("PLAY_IMAGE_TYPE") or "photo"
-    custom_emoji = setting_get("BUTTON_CUSTOM_EMOJI_ID") or ""
-    custom_emoji_status = "مفعل ✨" if custom_emoji else "غير مفعل"
+    rich_text = setting_get("PLAY_RICH_TEXT_HTML") or ""
+    rich_text_status = "مفعل ✨" if rich_text else "غير مفعل"
     bot.edit_message_text(
         "🎛️ <b>لوحة التشغيل</b>\n\n"
         f"✍️ الكتابة: <code>{credit_name}</code>\n"
@@ -757,7 +757,7 @@ def show_playback_settings(bot, call):
         f"🎵 زر الموسيقى: <code>{music_name}</code>\n"
         f"🔗 الرابط: <code>{music_url}</code>\n"
         f"🖼️ الصورة: <code>{image_type}</code>\n"
-        f"✨ Premium Emoji للأزرار: <b>{custom_emoji_status}</b>",
+        f"✨ الكتابة المميزة داخل النص: <b>{rich_text_status}</b>",
         call.message.chat.id, call.message.message_id,
         reply_markup=playback_settings_markup(), parse_mode="HTML"
     )
@@ -1085,13 +1085,13 @@ def _handle_callback_impl(bot, call):
         bot.answer_callback_query(call.id)
         begin_playback_input(bot, call, "play_music_pair", "🎵 أرسل بالصيغة: <code>اسم الزر : الرابط</code>")
         return True
-    if data == "play_custom_emoji":
+    if data == "play_rich_text":
         bot.answer_callback_query(call.id)
         begin_playback_input(
-            bot, call, "play_custom_emoji",
-            "✨ أرسل الآن Premium Custom Emoji واحد فقط.\n"
-            "لا تحتاج ترسل ID؛ البوت يستخرجه ويحفظه تلقائياً.\n"
-            "لإزالة الإيموجي المميز أرسل: <code>OFF</code>"
+            bot, call, "play_rich_text",
+            "✨ أرسل الرسالة كاملة كما تريد ظهورها، ويمكن أن تحتوي نصاً + Premium Custom Emoji.\n"
+            "مثال: <code>Music April</code> + الإيموجي المميز.\n"
+            "لإلغاء الكتابة المميزة أرسل: <code>OFF</code>"
         )
         return True
     if data == "play_set_image":
@@ -1409,6 +1409,49 @@ def handle_input(bot, message):
             "✅ تم حفظ الـPremium Emoji.\n"
             "سيظهر تلقائياً قبل كتابة أزرار لوحة التشغيل والزر الموجود تحت الأغنية."
         )
+        return True
+
+    if state == "play_rich_text":
+        if message.chat.type != "private":
+            bot.reply_to(message, "⛔ إعداد الكتابة المميزة يتم من الخاص فقط.")
+            return True
+
+        raw_text = (message.text or "").strip()
+        if raw_text.upper() == "OFF":
+            setting_set("PLAY_RICH_TEXT_HTML", "")
+            pending_input_set(message.from_user.id, None)
+            bot.reply_to(message, "✅ تم إلغاء الكتابة المميزة.")
+            return True
+
+        entities = getattr(message, "entities", None) or []
+        custom = next((e for e in entities if getattr(e, "type", None) == "custom_emoji" and getattr(e, "custom_emoji_id", None)), None)
+        if custom is None or not raw_text:
+            bot.reply_to(message, "❌ أرسل نصاً يحتوي على Premium Custom Emoji حقيقي.")
+            return True
+
+        def _utf16_boundary(text_value, units):
+            total = 0
+            for index, char in enumerate(text_value):
+                units_here = len(char.encode("utf-16-le")) // 2
+                if total >= units:
+                    return index
+                total += units_here
+                if total == units:
+                    return index + 1
+            return len(text_value)
+
+        def _rich_html(text_value, entity):
+            start = _utf16_boundary(text_value, int(getattr(entity, "offset", 0)))
+            end = _utf16_boundary(text_value, int(getattr(entity, "offset", 0)) + int(getattr(entity, "length", 0)))
+            emoji_text = text_value[start:end]
+            before = escape(text_value[:start])
+            after = escape(text_value[end:])
+            emoji_id = escape(str(getattr(entity, "custom_emoji_id")), quote=True)
+            return f'{before}<tg-emoji emoji-id="{emoji_id}">{escape(emoji_text)}</tg-emoji>{after}'
+
+        setting_set("PLAY_RICH_TEXT_HTML", _rich_html(raw_text, custom))
+        pending_input_set(message.from_user.id, None)
+        bot.reply_to(message, "✅ تم حفظ النص والـPremium Emoji كما أرسلته.")
         return True
 
     if state in {"play_credit_pair", "play_music_pair", "chat_cmd_button", "jat_audio_button", "jat_audio_credit"}:
