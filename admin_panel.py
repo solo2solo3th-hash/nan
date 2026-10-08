@@ -16,6 +16,19 @@ from developer_panel import (
 )
 
 
+def types.InlineKeyboardButton(text, *args, emoji_key=None, **kwargs):
+    from database import setting_get
+    key = emoji_key or str(kwargs.get("callback_data") or text).split(":", 1)[0].upper().replace("-", "_")
+    emoji_id = (setting_get(f"EMOJI_BTN_{key}") or "").strip()
+    if emoji_id:
+        kwargs["icon_custom_emoji_id"] = emoji_id
+    try:
+        return types.InlineKeyboardButton(text, *args, **kwargs)
+    except TypeError:
+        kwargs.pop("icon_custom_emoji_id", None)
+        return types.InlineKeyboardButton(text, *args, **kwargs)
+
+
 def developer_markup():
     return _developer_markup()
 
@@ -44,19 +57,19 @@ def playback_markup():
 
 def users_markup():
     keyboard = types.InlineKeyboardMarkup(row_width=1)
-    keyboard.add(types.InlineKeyboardButton("🚫 حظر مستخدم", callback_data="user_ban"))
-    keyboard.add(types.InlineKeyboardButton("✅ رفع الحظر", callback_data="user_unban"))
-    keyboard.add(types.InlineKeyboardButton("📋 المحظورون", callback_data="user_banned"))
-    keyboard.add(types.InlineKeyboardButton("↩️ الرئيسية", callback_data="adm_home"))
+    keyboard.add(_admin_button("🚫 حظر مستخدم", callback_data="user_ban"))
+    keyboard.add(_admin_button("✅ رفع الحظر", callback_data="user_unban"))
+    keyboard.add(_admin_button("📋 المحظورون", callback_data="user_banned"))
+    keyboard.add(_admin_button("↩️ الرئيسية", callback_data="adm_home"))
     return keyboard
 
 
 def subscriptions_markup():
     keyboard = types.InlineKeyboardMarkup(row_width=2)
-    keyboard.row(types.InlineKeyboardButton("➕ إضافة", callback_data="sub_add"), types.InlineKeyboardButton("🗑️ حذف", callback_data="sub_remove"))
-    keyboard.add(types.InlineKeyboardButton("📋 القنوات", callback_data="sub_list"))
-    keyboard.add(types.InlineKeyboardButton("🔛 تشغيل/إيقاف الإجباري", callback_data="sub_toggle"))
-    keyboard.add(types.InlineKeyboardButton("↩️ الرئيسية", callback_data="adm_home"))
+    keyboard.row(_admin_button("➕ إضافة", callback_data="sub_add"), _admin_button("🗑️ حذف", callback_data="sub_remove"))
+    keyboard.add(_admin_button("📋 القنوات", callback_data="sub_list"))
+    keyboard.add(_admin_button("🔛 تشغيل/إيقاف الإجباري", callback_data="sub_toggle"))
+    keyboard.add(_admin_button("↩️ الرئيسية", callback_data="adm_home"))
     return keyboard
 
 
