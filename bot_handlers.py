@@ -615,11 +615,12 @@ def _handle_pending(bot, message) -> bool:
                         return index + 1
                 return len(value)
 
+            sep_utf16 = len(raw[:sep].encode("utf-16-le")) // 2
             for entity in (getattr(message, "entities", None) or []):
                 if getattr(entity, "type", None) == "custom_emoji":
                     offset = int(getattr(entity, "offset", 0))
                     length = int(getattr(entity, "length", 0))
-                    if offset + length <= sep:
+                    if offset + length <= sep_utf16:
                         custom_emoji_id = getattr(entity, "custom_emoji_id", None)
                         if custom_emoji_id:
                             start = _utf16_index(raw, offset)
