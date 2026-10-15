@@ -1073,14 +1073,26 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             status = bot.reply_to(message, "🎬 جاري تنزيل الفيديو وإرساله...")
             try:
                 info, path, job = download_video(arg)
-                title = str(info.get("title") or "مقطع فيديو").strip() or "مقطع فيديو"
+                import html
+                caption_text = (setting_get("VIDEO_CAPTION_TEXT") or "🎬 الفيديو").strip()
+                caption_url = (setting_get("VIDEO_CAPTION_URL") or "").strip()
+                caption = html.escape(caption_text)
+                if caption_url:
+                    caption += "\n" + f'<a href="{html.escape(caption_url, quote=True)}">الرابط</a>'
                 duration = max(0, int(info.get("duration") or 0))
+                video_button_name = (setting_get("VIDEO_BUTTON_NAME") or "").strip()
+                video_button_url = (setting_get("VIDEO_BUTTON_URL") or "").strip()
+                video_markup = types.InlineKeyboardMarkup(row_width=1)
+                if video_button_name and video_button_url:
+                    video_markup.add(_bot_button(video_button_name[:64], url=video_button_url))
                 bot.send_chat_action(chat_id, "upload_video")
                 with open(path, "rb") as video:
                     bot.send_video(
                         chat_id,
                         video,
-                        caption=title[:1024],
+                        caption=caption[:1024],
+                        parse_mode="HTML",
+                        reply_markup=video_markup if video_button_name and video_button_url else None,
                         duration=duration or None,
                         supports_streaming=True,
                         timeout=600,
