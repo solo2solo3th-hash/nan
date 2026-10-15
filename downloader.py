@@ -506,7 +506,7 @@ def download_audio(query: str):
 
 VIDEO_EXTENSIONS = {".mp4", ".m4v", ".mov", ".webm", ".mkv"}
 TELEGRAM_VIDEO_LIMIT_MB = 45
-VIDEO_SOURCE_LIMIT_MB = 300
+VIDEO_SOURCE_LIMIT_MB = 400
 
 
 def _fit_video_for_telegram(source: Path, output: Path, duration: int) -> Path:
@@ -521,7 +521,7 @@ def _fit_video_for_telegram(source: Path, output: Path, duration: int) -> Path:
         raise RuntimeError("Could not determine video duration to safely prepare upload")
     audio_kbps = 96
     target_kbps = int((target_bytes * 8 / duration / 1000) * 0.90)
-    video_kbps = max(100, target_kbps - audio_kbps)
+    video_kbps = max(24, target_kbps - audio_kbps)
     command = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
         "-i", str(source),
