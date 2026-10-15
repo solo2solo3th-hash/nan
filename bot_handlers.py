@@ -1083,7 +1083,17 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                 video_button_name = (setting_get("VIDEO_BUTTON_NAME") or "").strip()
                 video_button_url = (setting_get("VIDEO_BUTTON_URL") or "").strip()
                 video_markup = types.InlineKeyboardMarkup(row_width=1)
-                if video_button_name and video_button_url:
+                # A malformed optional button must never prevent the video itself
+                # from being delivered. Only attach a valid absolute HTTP(S) URL.
+                from urllib.parse import urlparse
+                parsed_video_button_url = urlparse(video_button_url)
+                valid_video_button_url = (
+                    parsed_video_button_url.scheme in {"https", "http"}
+                    and bool(parsed_video_button_url.netloc)
+                    and "." in parsed_video_button_url.netloc
+                    and " " not in video_button_url
+                )
+                if video_button_name and valid_video_button_url:
                     video_markup.add(_bot_button(video_button_name[:64], url=video_button_url))
                 bot.send_chat_action(chat_id, "upload_video")
                 with open(path, "rb") as video:
