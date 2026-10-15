@@ -1123,6 +1123,9 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                     title = str(info.get("title") or "audio").strip() or "audio"
                     duration = max(0, int(info.get("duration") or 0))
                     send_audio_kwargs = {
+                        # Give this upload more time on slow Railway connections.
+                        # pyTelegramBotAPI uses this as the HTTP connect/read timeout.
+                        "timeout": 600,
                         "title": title,
                         "performer": _audio_jat_performer(),
                         "caption": _audio_jat_caption(),
