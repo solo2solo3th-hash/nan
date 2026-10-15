@@ -502,3 +502,57 @@ def download_audio(query: str):
             for p in job.iterdir()
         ):
             cleanup_job(job)
+
+
+VIDEO_EXTENSIONS = {".mp4", ".m4v", ".mov", ".webm", ".mkv"}
+
+
+def download_video(url: str):
+    """Download a single video URL for the restricted admin-only clip command."""
+    import yt_dlp
+
+    url = (url or "").strip()
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("A valid http(s) video URL is required")
+
+    job = Path(DOWNLOAD_DIR) / ("video_" + uuid.uuid4().hex)
+    job.mkdir(parents=True, exist_ok=False)
+    max_video_mb = min(MAX_DOWNLOAD_MB, 45)
+    options = {
+        "format": "best[ext=mp4]/best",
+        "merge_output_format": "mp4",
+        "noplaylist": True,
+        "outtmpl": str(job / "%(extractor)s-%(id)s.%(ext)s"),
+        "quiet": True,
+        "no_warnings": True,
+        "retries": DOWNLOAD_RETRIES,
+        "fragment_retries": DOWNLOAD_RETRIES,
+        "socket_timeout": SOCKET_TIMEOUT,
+        "restrictfilenames": True,
+        "overwrites": False,
+        "max_filesize": max_video_mb * 1024 * 1024,
+        "js_runtimes": {"node": {}},
+    }
+    try:
+        with yt_dlp.YoutubeDL(options) as ydl:
+            info = ydl.extract_info(url, download=True)
+
+        if info and info.get("entries"):
+            info = next((entry for entry in info["entries"] if entry), info)
+        candidates = [
+            path for path in job.iterdir()
+            if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
+            and path.stat().st_size > 0
+        ]
+        if not candidates:
+            raise RuntimeError("Video download completed without producing a usable video file")
+        path = max(candidates, key=lambda item: item.stat().st_size)
+        if path.stat().st_size > max_video_mb * 1024 * 1024:
+            raise RuntimeError(
+                f"Video exceeds Telegram-safe limit ({max_video_mb} MiB); try a shorter video"
+            )
+        return info or {}, str(path.resolve()), str(job)
+    except Exception as exc:
+        cleanup_job(job)
+        raise RuntimeError(f"Video download failed: {exc}") from exc
