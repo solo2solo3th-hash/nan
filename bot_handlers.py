@@ -11,7 +11,7 @@ from telebot import types, apihelper
 
 # Audio uploads can take longer than ordinary Bot API calls on Railway.
 # Increase the request read/write timeout without changing other bot behavior.
-apihelper.READ_TIMEOUT = max(getattr(apihelper, "READ_TIMEOUT", 30), 180)
+apihelper.READ_TIMEOUT = max(getattr(apihelper, "READ_TIMEOUT", 30), 300)
 
 from admin_panel import playback_markup, subscriptions_markup, users_markup
 from calls import VoiceCallRunner
