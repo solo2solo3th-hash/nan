@@ -741,8 +741,11 @@ def show_jat_audio(bot, call):
 
 def chat_commands_markup():
     m = types.InlineKeyboardMarkup(row_width=1)
-    m.add(_panel_button("✍️ اسم الزر + الرابط", callback_data="chat_cmd_button"))
-    m.add(_panel_button("🗑️ حذف الزر", callback_data="chat_cmd_button_clear"))
+    m.add(_panel_button("✍️ اسم زر أوامر الشات + الرابط", callback_data="chat_cmd_button"))
+    m.add(_panel_button("🎬 الفيديو: النص + الرابط", callback_data="video_caption_pair"))
+    m.add(_panel_button("🔘 زر أسفل الفيديو: الاسم + الرابط", callback_data="video_button_pair"))
+    m.add(_panel_button("🗑️ حذف زر أوامر الشات", callback_data="chat_cmd_button_clear"))
+    m.add(_panel_button("🗑️ مسح إعدادات الفيديو", callback_data="video_settings_clear"))
     m.add(_panel_button("↩️ رجوع", callback_data="back_to_main"))
     return m
 
@@ -750,11 +753,19 @@ def show_chat_commands(bot, call):
     from database import setting_get
     name = setting_get("CHAT_COMMANDS_BUTTON_NAME") or "غير محدد"
     url = setting_get("CHAT_COMMANDS_BUTTON_URL") or "غير محدد"
+    video_text = setting_get("VIDEO_CAPTION_TEXT") or "🎬 الفيديو"
+    video_url = setting_get("VIDEO_CAPTION_URL") or "غير محدد"
+    video_button_name = setting_get("VIDEO_BUTTON_NAME") or "غير محدد"
+    video_button_url = setting_get("VIDEO_BUTTON_URL") or "غير محدد"
     bot.edit_message_text(
         "💬 <b>أوامر الشات</b>\n\n"
         "عند كتابة «اوامر» داخل المجموعة تظهر قائمة الأوامر للعضو أو المشرف أو المالك.\n\n"
-        f"🔘 اسم الزر: <code>{name}</code>\n"
-        f"🔗 الرابط: <code>{url}</code>",
+        f"🔘 اسم زر أوامر الشات: <code>{name}</code>\n"
+        f"🔗 الرابط: <code>{url}</code>\n\n"
+        f"🎬 <b>نص الفيديو:</b> <code>{video_text}</code>\n"
+        f"🔗 <b>رابط النص:</b> <code>{video_url}</code>\n"
+        f"🔘 <b>زر أسفل الفيديو:</b> <code>{video_button_name}</code>\n"
+        f"🔗 <b>رابط الزر:</b> <code>{video_button_url}</code>",
         call.message.chat.id, call.message.message_id,
         reply_markup=chat_commands_markup(), parse_mode="HTML"
     )
@@ -1076,6 +1087,27 @@ def _handle_callback_impl(bot, call):
     if data == "chat_cmd_button":
         bot.answer_callback_query(call.id)
         begin_playback_input(bot, call, "chat_cmd_button", "💬 أرسل بالصيغة: <code>اسم الزر : الرابط</code>")
+        return True
+    if data == "video_caption_pair":
+        bot.answer_callback_query(call.id)
+        begin_playback_input(
+            bot, call, "video_caption_pair",
+            "🎬 أرسل نص الفيديو ثم الرابط بالصيغة: <code>النص : https://example.com</code>\n"
+            "سيظهر النص مع رابط قابل للضغط تحته. لإزالة الرابط اكتب: <code>النص :</code>"
+        )
+        return True
+    if data == "video_button_pair":
+        bot.answer_callback_query(call.id)
+        begin_playback_input(
+            bot, call, "video_button_pair",
+            "🔘 أرسل اسم الزر ورابطه بالصيغة: <code>اسم الزر : https://example.com</code>"
+        )
+        return True
+    if data == "video_settings_clear":
+        for key in ("VIDEO_CAPTION_TEXT", "VIDEO_CAPTION_URL", "VIDEO_BUTTON_NAME", "VIDEO_BUTTON_URL"):
+            setting_set(key, "")
+        bot.answer_callback_query(call.id, "✅ تم مسح إعدادات الفيديو.")
+        show_chat_commands(bot, call)
         return True
     if data == "chat_cmd_button_clear":
         setting_set("CHAT_COMMANDS_BUTTON_NAME", "")
@@ -1523,6 +1555,36 @@ def handle_input(bot, message):
             setting_set(f"PLAY_BTN_LABEL_{key}", "" if value.upper() == "DEFAULT" else value)
         pending_input_set(message.from_user.id, None)
         bot.reply_to(message, "✅ تم تحديث أسماء أزرار لوحة التشغيل.")
+        return True
+
+    if state in {"video_caption_pair", "video_button_pair"}:
+        raw = (message.text or "").strip()
+        if ":" not in raw:
+            bot.reply_to(message, "❌ الصيغة الصحيحة: النص أو اسم الزر : الرابط")
+            return True
+        name, url = (part.strip() for part in raw.split(":", 1))
+        if len(name) > (900 if state == "video_caption_pair" else 64) or len(url) > 2048:
+            bot.reply_to(message, "❌ النص أو الرابط أطول من الحد المسموح.")
+            return True
+        if url and not url.startswith(("https://", "http://", "tg://")):
+            bot.reply_to(message, "❌ الرابط يجب أن يبدأ بـ https:// أو http:// أو tg://")
+            return True
+        if state == "video_caption_pair":
+            if not name:
+                bot.reply_to(message, "❌ النص لا يمكن أن يكون فارغاً.")
+                return True
+            setting_set("VIDEO_CAPTION_TEXT", name)
+            setting_set("VIDEO_CAPTION_URL", url)
+            pending_input_set(message.from_user.id, None)
+            bot.reply_to(message, "✅ تم حفظ نص الفيديو ورابطه.")
+        else:
+            if not name or not url:
+                bot.reply_to(message, "❌ أرسل اسم الزر والرابط.")
+                return True
+            setting_set("VIDEO_BUTTON_NAME", name)
+            setting_set("VIDEO_BUTTON_URL", url)
+            pending_input_set(message.from_user.id, None)
+            bot.reply_to(message, "✅ تم حفظ زر الفيديو ورابطه.")
         return True
 
     if state in {"play_credit_pair", "play_music_pair", "chat_cmd_button", "jat_audio_button", "jat_audio_credit"}:
