@@ -29,7 +29,7 @@ from developer_panel import (
     handle_input as handle_developer_panel_input,
     chat_commands_markup,
 )
-from downloader import cleanup_job, download_audio
+from downloader import cleanup_job, download_audio, download_video
 from member_panel import handle_start, handle_user_panel_callback
 from music_player import MusicPlayer, Track
 from subscriptions import mandatory_missing
@@ -1006,7 +1006,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
         command = _normalize_chat_command(parts[0])
         arg = parts[1].strip() if len(parts) > 1 else ""
         aliases = {
-            "شغل": "play", "تشغيل": "play", "تحميل": "download", "حمل": "download", "يوتيوب": "download",
+            "شغل": "play", "تشغيل": "play", "تحميل": "download", "حمل": "download", "يوتيوب": "download", "مقطع": "clip",
             "يوت": "download", "نزل": "download", "تنزيل": "download",
             "تخطي": "skip", "التالي": "skip", "التاليه": "skip",
             "ايقاف": "stop", "إيقاف": "stop", "وقف": "stop", "توقف": "stop",
@@ -1055,6 +1055,51 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
 
         actor = getattr(getattr(message, "from_user", None), "id", None)
         is_channel = message.chat.type == "channel"
+
+        # Video clips are restricted to the developer and registered admins,
+        # independently of the public music-control setting.
+        if action == "clip":
+            if actor is None or not admin_can(int(actor)):
+                bot.reply_to(message, "🚫 أمر مقطع خاص بالمطور والمشرفين فقط.")
+                return True
+            if not arg:
+                bot.reply_to(message, "🎬 أرسل رابط المقطع بعد الأمر.\nمثال: مقطع https://pin.it/7BRJDXerY")
+                return True
+            if not arg.startswith(("https://", "http://")):
+                bot.reply_to(message, "❌ أرسل رابط فيديو صحيح يبدأ بـ https:// أو http://")
+                return True
+            chat_id = message.chat.id
+            job = None
+            status = bot.reply_to(message, "🎬 جاري تنزيل الفيديو وإرساله...")
+            try:
+                info, path, job = download_video(arg)
+                title = str(info.get("title") or "مقطع فيديو").strip() or "مقطع فيديو"
+                duration = max(0, int(info.get("duration") or 0))
+                bot.send_chat_action(chat_id, "upload_video")
+                with open(path, "rb") as video:
+                    bot.send_video(
+                        chat_id,
+                        video,
+                        caption=title[:1024],
+                        duration=duration or None,
+                        supports_streaming=True,
+                        timeout=600,
+                        reply_to_message_id=message.message_id,
+                    )
+            except Exception as exc:
+                log.exception("Admin video clip download/send failed")
+                _notify_error(bot, exc, "تنزيل/إرسال مقطع فيديو", message)
+                try:
+                    bot.send_message(chat_id, "❌ تعذر تنزيل المقطع أو إرساله. جرّب رابطاً آخر أو مقطعاً أقصر.")
+                except Exception:
+                    log.exception("Failed to send video clip error notice")
+            finally:
+                cleanup_job(job)
+                try:
+                    bot.delete_message(chat_id, status.message_id)
+                except Exception:
+                    pass
+            return True
 
         # Treat groups, supergroups, and channel posts as one music-command surface.
         # Channel posts do not carry from_user, so permission checks fall back to the
