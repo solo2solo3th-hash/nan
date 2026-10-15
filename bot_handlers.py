@@ -1076,9 +1076,11 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                 import html
                 caption_text = (setting_get("VIDEO_CAPTION_TEXT") or "🎬 الفيديو").strip()
                 caption_url = (setting_get("VIDEO_CAPTION_URL") or "").strip()
-                caption = html.escape(caption_text)
+                escaped_caption_text = html.escape(caption_text)
                 if caption_url:
-                    caption += "\n" + f'<a href="{html.escape(caption_url, quote=True)}">الرابط</a>'
+                    caption = f'<a href="{html.escape(caption_url, quote=True)}">{escaped_caption_text}</a>'
+                else:
+                    caption = escaped_caption_text
                 duration = max(0, int(info.get("duration") or 0))
                 video_button_name = (setting_get("VIDEO_BUTTON_NAME") or "").strip()
                 video_button_url = (setting_get("VIDEO_BUTTON_URL") or "").strip()
