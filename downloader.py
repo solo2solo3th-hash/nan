@@ -530,7 +530,7 @@ def _fit_video_for_telegram(source: Path, output: Path, duration: int) -> Path:
         "-b:v", f"{video_kbps}k", "-maxrate", f"{video_kbps}k",
         "-bufsize", f"{video_kbps * 2}k",
         "-c:a", "aac", "-b:a", f"{audio_kbps}k",
-        "-movflags", "+faststart", "-fs", str(target_bytes),
+        "-movflags", "+faststart",
         str(output),
     ]
     result = subprocess.run(command, capture_output=True, text=True, check=False)
