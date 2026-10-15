@@ -505,10 +505,45 @@ def download_audio(query: str):
 
 
 VIDEO_EXTENSIONS = {".mp4", ".m4v", ".mov", ".webm", ".mkv"}
+TELEGRAM_VIDEO_LIMIT_MB = 45
+VIDEO_SOURCE_LIMIT_MB = 300
+
+
+def _fit_video_for_telegram(source: Path, output: Path, duration: int) -> Path:
+    """Keep original quality when possible; otherwise encode to a Telegram-safe MP4."""
+    target_bytes = TELEGRAM_VIDEO_LIMIT_MB * 1024 * 1024
+    if source.stat().st_size <= target_bytes and source.suffix.lower() == ".mp4":
+        return source
+
+    # Preserve the source resolution. Allocate the remaining size to video after audio
+    # and container overhead; long videos automatically use a lower bitrate.
+    if duration <= 0:
+        raise RuntimeError("Could not determine video duration to safely prepare upload")
+    audio_kbps = 96
+    target_kbps = int((target_bytes * 8 / duration / 1000) * 0.90)
+    video_kbps = max(100, target_kbps - audio_kbps)
+    command = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+        "-i", str(source),
+        "-map", "0:v:0", "-map", "0:a:0?",
+        "-c:v", "libx264", "-preset", "veryfast",
+        "-b:v", f"{video_kbps}k", "-maxrate", f"{video_kbps}k",
+        "-bufsize", f"{video_kbps * 2}k",
+        "-c:a", "aac", "-b:a", f"{audio_kbps}k",
+        "-movflags", "+faststart", "-fs", str(target_bytes),
+        str(output),
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    if result.returncode != 0 or not output.exists() or output.stat().st_size <= 0:
+        detail = (result.stderr or "").strip()[-1200:]
+        raise RuntimeError("Could not prepare video for Telegram upload" + (f": {detail}" if detail else ""))
+    if output.stat().st_size > target_bytes:
+        raise RuntimeError("Video is still too large for Telegram after compression; try a shorter video")
+    return output
 
 
 def download_video(url: str):
-    """Download a single video URL for the restricted admin-only clip command."""
+    """Download the best available video, then fit it to Telegram's cloud upload limit."""
     import yt_dlp
 
     url = (url or "").strip()
@@ -518,9 +553,11 @@ def download_video(url: str):
 
     job = Path(DOWNLOAD_DIR) / ("video_" + uuid.uuid4().hex)
     job.mkdir(parents=True, exist_ok=False)
-    max_video_mb = min(MAX_DOWNLOAD_MB, 45)
+    source_limit_bytes = VIDEO_SOURCE_LIMIT_MB * 1024 * 1024
     options = {
-        "format": "best",
+        # Prefer the highest available video stream plus best audio; fall back to
+        # a site's single-file format where separate streams are not offered.
+        "format": "bestvideo*+bestaudio/best",
         "merge_output_format": "mp4",
         "noplaylist": True,
         "outtmpl": str(job / "%(extractor)s-%(id)s.%(ext)s"),
@@ -531,7 +568,7 @@ def download_video(url: str):
         "socket_timeout": SOCKET_TIMEOUT,
         "restrictfilenames": True,
         "overwrites": False,
-        "max_filesize": max_video_mb * 1024 * 1024,
+        "max_filesize": source_limit_bytes,
         "js_runtimes": {"node": {}},
     }
     try:
@@ -542,17 +579,31 @@ def download_video(url: str):
             info = next((entry for entry in info["entries"] if entry), info)
         candidates = [
             path for path in job.iterdir()
-            if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
+            if path.is_file()
+            and path.suffix.lower() in VIDEO_EXTENSIONS
             and path.stat().st_size > 0
+            and not path.stem.endswith("-telegram")
         ]
         if not candidates:
             raise RuntimeError("Video download completed without producing a usable video file")
-        path = max(candidates, key=lambda item: item.stat().st_size)
-        if path.stat().st_size > max_video_mb * 1024 * 1024:
+        source = max(candidates, key=lambda item: item.stat().st_size)
+        if source.stat().st_size > source_limit_bytes:
             raise RuntimeError(
-                f"Video exceeds Telegram-safe limit ({max_video_mb} MiB); try a shorter video"
+                f"Original video exceeds the safe processing limit ({VIDEO_SOURCE_LIMIT_MB} MiB)"
             )
-        return info or {}, str(path.resolve()), str(job)
+
+        duration = max(0, int((info or {}).get("duration") or 0))
+        output = job / f"{source.stem}-telegram.mp4"
+        if source.stat().st_size <= TELEGRAM_VIDEO_LIMIT_MB * 1024 * 1024 and source.suffix.lower() == ".mp4":
+            final_path = source
+        else:
+            final_path = _fit_video_for_telegram(source, output, duration)
+
+        if final_path.stat().st_size > TELEGRAM_VIDEO_LIMIT_MB * 1024 * 1024:
+            raise RuntimeError(
+                f"Prepared video exceeds Telegram's safe upload limit ({TELEGRAM_VIDEO_LIMIT_MB} MiB)"
+            )
+        return info or {}, str(final_path.resolve()), str(job)
     except Exception as exc:
         cleanup_job(job)
         raise RuntimeError(f"Video download failed: {exc}") from exc
