@@ -520,7 +520,7 @@ def download_video(url: str):
     job.mkdir(parents=True, exist_ok=False)
     max_video_mb = min(MAX_DOWNLOAD_MB, 45)
     options = {
-        "format": "best[ext=mp4]/best",
+        "format": "best",
         "merge_output_format": "mp4",
         "noplaylist": True,
         "outtmpl": str(job / "%(extractor)s-%(id)s.%(ext)s"),
