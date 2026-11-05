@@ -359,7 +359,8 @@ def _run_ffmpeg_to_mp3(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=max(SOCKET_TIMEOUT * 2, 120),
+            # Allow slower Railway instances enough time for large audio files.
+            timeout=max(SOCKET_TIMEOUT * 4, 300),
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
@@ -404,10 +405,10 @@ def _finish(job: Path, info: dict):
     source_size_bytes = source_file.stat().st_size
     duration = max(0, int(info.get("duration") or 0))
 
-    # Keep the public return contract as MP3 so existing bot_handlers.py code
-    # does not need to change. Re-encode an MP3 only when it is too large.
+    # bot_handlers.py accepts both MP3 and M4A. Keep either format when it
+    # already fits the upload limit, avoiding needless FFmpeg work and timeouts.
     if (
-        source_file.suffix.lower() == ".mp3"
+        source_file.suffix.lower() in {".mp3", ".m4a"}
         and source_size_bytes <= target_size_bytes
     ):
         mp3_file = source_file
