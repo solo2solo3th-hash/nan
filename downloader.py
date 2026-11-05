@@ -498,7 +498,7 @@ def download_audio(query: str):
         # Do not delete the job when a valid MP3 was returned.
         if not any(
             p.is_file()
-            and p.suffix.lower() == ".mp3"
+            and p.suffix.lower() in {".mp3", ".m4a"}
             and p.stat().st_size > 0
             for p in job.iterdir()
         ):
