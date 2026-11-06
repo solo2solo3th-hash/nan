@@ -1182,7 +1182,11 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                 if not arg:
                     bot.reply_to(message, "📥 اكتب اسم الأغنية بعد الأمر.\nمثال: يوت حسين الجسمي")
                     return True
-                bot.send_chat_action(chat_id, "upload_audio")
+                # This typing/upload indicator is optional; Telegram timeouts must not abort the download.
+                try:
+                    bot.send_chat_action(chat_id, "upload_audio", timeout=10)
+                except Exception as action_exc:
+                    log.warning("Could not send upload_audio chat action in chat %s: %s", chat_id, action_exc)
                 status = bot.reply_to(message, "نينو يحبك ويكلك نتضر في حالة الانتضار ⏳")
                 job = None
                 try:
