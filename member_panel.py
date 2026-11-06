@@ -33,7 +33,7 @@ def start_markup(bot_username: str):
     # One Telegram chooser supports adding the bot to a group or a channel.
     keyboard.add(_member_button(
         "➕ أضفني لمجموعتك/قناتك",
-        url=f"https://t.me/{bot_username}?startgroup=true",
+        callback_data="add_bot_menu",
     ))
     for name_key, url_key in (("CUSTOM_BTN1_NAME", "CUSTOM_BTN1_URL"), ("CUSTOM_BTN2_NAME", "CUSTOM_BTN2_URL")):
         name, url = setting_get(name_key), setting_get(url_key)
@@ -64,6 +64,23 @@ def handle_start(bot, message, bot_username: str) -> None:
 def handle_user_panel_callback(bot, call, alert) -> bool:
     data = call.data or ""
     allowed = {"adm_user_panel", "set_start_text", "set_start_image", "set_btn1", "set_btn2"}
+    if data == "add_bot_menu":
+        bot.answer_callback_query(call.id)
+        keyboard = types.InlineKeyboardMarkup(row_width=1)
+        keyboard.add(_member_button(
+            "👥 أضفني إلى مجموعة",
+            url=f"https://t.me/{bot.get_me().username}?startgroup=true",
+        ))
+        keyboard.add(_member_button(
+            "📢 أضفني إلى قناة (تحديد الصلاحيات)",
+            url=f"https://t.me/{bot.get_me().username}?startchannel&admin=post_messages",
+        ))
+        bot.edit_message_reply_markup(
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=keyboard,
+        )
+        return True
     if data not in allowed:
         return False
     if not has_permission(call.from_user.id, "user_panel", DEVELOPER_ID):
