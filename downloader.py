@@ -267,8 +267,30 @@ def _download_one(source: str, target: str, job: Path):
         if cookie_path:
             options["cookiefile"] = cookie_path
 
-    with yt_dlp.YoutubeDL(options) as ydl:
-        info = ydl.extract_info(target, download=True)
+    try:
+        with yt_dlp.YoutubeDL(options) as ydl:
+            info = ydl.extract_info(target, download=True)
+    except Exception as first_error:
+        # YouTube can challenge the default web client on hosted server IPs.
+        # Retry once with alternate public player clients before moving to the
+        # next source. Never reuse a web PO token with a different client.
+        if source != "youtube":
+            raise
+        fallback_options = _source_options(job, source)
+        cookie_path = _write_youtube_cookies(job)
+        if cookie_path:
+            fallback_options["cookiefile"] = cookie_path
+        fallback_options["extractor_args"] = {
+            "youtube": "player_client=tv,web_safari"
+        }
+        try:
+            with yt_dlp.YoutubeDL(fallback_options) as ydl:
+                info = ydl.extract_info(target, download=True)
+        except Exception as fallback_error:
+            raise RuntimeError(
+                "YouTube default and alternate player clients both failed. "
+                f"default: {first_error}; alternate: {fallback_error}"
+            ) from fallback_error
 
     # yt-dlp can report success while exposing the final output path only
     # through filepath/requested_downloads. Recover that file into the job
