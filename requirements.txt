@@ -4,3 +4,4 @@ TgCrypto==1.2.5
 py-tgcalls==2.3.3
 yt-dlp[default,curl-cffi]==2026.10.26
 cryptography>=42.0.0,<47.0.0
+bgutil-ytdlp-pot-provider==2.0.2
