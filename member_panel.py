@@ -73,7 +73,7 @@ def handle_user_panel_callback(bot, call, alert) -> bool:
         ))
         keyboard.add(_member_button(
             "📢 أضفني إلى قناة (تحديد الصلاحيات)",
-            url=f"https://t.me/{bot.get_me().username}?startchannel&admin=post_messages",
+            url=f"https://t.me/{bot.get_me().username}?startchannel&admin=post_messages+edit_messages+delete_messages+invite_users",
         ))
         bot.edit_message_reply_markup(
             call.message.chat.id,
