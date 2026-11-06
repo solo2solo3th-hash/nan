@@ -90,6 +90,7 @@ def cleanup_job(job: str | Path | None) -> None:
 
 
 def _decode_cookie_secret() -> str | None:
+    """Load and validate a Netscape cookies.txt value from Railway variables."""
     raw = YOUTUBE_COOKIES.strip()
     if not raw and YOUTUBE_COOKIES_B64.strip():
         try:
@@ -104,19 +105,63 @@ def _decode_cookie_secret() -> str | None:
     if not raw:
         return None
 
-    raw = raw.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\r\n", "\n")
+    # Railway variables may contain literal escaped line endings when copied
+    # from a shell or dashboard. Convert those without changing cookie values.
+    raw = (
+        raw.replace("\\r\\n", "\n")
+        .replace("\\n", "\n")
+        .replace("\\r", "\n")
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+    )
+    lines = raw.splitlines()
     first_nonempty = next(
-        (line.strip() for line in raw.splitlines() if line.strip()), ""
+        (line.strip() for line in lines if line.strip()), ""
     )
 
     if first_nonempty not in _NETSCAPE_COOKIE_HEADERS:
         raise RuntimeError(
-            "YOUTUBE_COOKIES must be a Mozilla/Netscape cookies.txt file "
-            "starting with '# Netscape HTTP Cookie File' or '# HTTP Cookie File'"
+            "YouTube cookies are not in Netscape format. Set YOUTUBE_COOKIES "
+            "to the complete cookies.txt export, including its header."
         )
 
-    return raw.rstrip("\n") + "\n"
+    cookie_count = 0
+    for line_number, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
 
+        fields = line.split("\t")
+        if len(fields) != 7:
+            raise RuntimeError(
+                "Invalid YouTube cookies.txt format at line "
+                f"{line_number}: each cookie must be one line with 7 "
+                "TAB-separated fields. Re-export the file in Netscape "
+                "cookies.txt format; do not paste one field per line."
+            )
+
+        domain, include_subdomains, path, secure, expiry, name, value = fields
+        if (
+            not domain.strip()
+            or include_subdomains not in {"TRUE", "FALSE"}
+            or not path.startswith("/")
+            or secure not in {"TRUE", "FALSE"}
+            or not expiry.isdigit()
+            or not name
+        ):
+            raise RuntimeError(
+                "Invalid YouTube cookies.txt entry at line "
+                f"{line_number}. Re-export the complete Netscape cookies.txt "
+                "file without editing or reformatting it."
+            )
+        cookie_count += 1
+
+    if cookie_count == 0:
+        raise RuntimeError(
+            "YOUTUBE_COOKIES contains a header but no cookie entries."
+        )
+
+    return "\n".join(lines).rstrip("\n") + "\n"
 
 def _write_youtube_cookies(job: Path) -> str | None:
     cookies = _decode_cookie_secret()
