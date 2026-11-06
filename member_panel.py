@@ -32,7 +32,7 @@ def start_markup(bot_username: str):
     keyboard = types.InlineKeyboardMarkup(row_width=1)
     # Group addition and channel administrator setup are separate Telegram flows.
     keyboard.add(_member_button("➕ أضفني إلى مجموعتك", url=f"https://t.me/{bot_username}?startgroup=true"))
-    channel_admin_rights = "post_messages+edit_messages+delete_messages"
+    channel_admin_rights = "post_messages+edit_messages+delete_messages+invite_users"
     keyboard.add(_member_button(
         "📢 أضفني إلى قناتك كمسؤول",
         url=f"https://t.me/{bot_username}?startchannel&admin={channel_admin_rights}",
