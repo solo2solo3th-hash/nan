@@ -21,7 +21,6 @@ from config import (
     SOCKET_TIMEOUT,
     YOUTUBE_COOKIES,
     YOUTUBE_COOKIES_B64,
-    YOUTUBE_PO_TOKEN,
 )
 
 _NETSCAPE_COOKIE_HEADERS = ("# HTTP Cookie File", "# Netscape HTTP Cookie File")
@@ -180,10 +179,10 @@ def _write_youtube_cookies(job: Path) -> str | None:
 
 
 def _youtube_extractor_args() -> dict[str, str]:
-    if not YOUTUBE_PO_TOKEN:
-        return {}
+    # The bgutil provider generates fresh, video-bound PO tokens at runtime.
+    # mweb uses those tokens; tv and web_safari remain fallback clients.
     return {
-        "youtube": f"player-client=web,default;po_token=web+{YOUTUBE_PO_TOKEN}"
+        "youtube": "player-client=mweb,tv,web_safari"
     }
 
 
