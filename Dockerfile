@@ -1,6 +1,15 @@
 # Railway must build from this root Dockerfile so FFmpeg/ffprobe are guaranteed.
 FROM node:22-bookworm-slim AS node_runtime
 
+FROM node:22-bookworm-slim AS pot_provider_builder
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch 2.0.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil-ytdlp-pot-provider \
+    && cd /opt/bgutil-ytdlp-pot-provider/server \
+    && npm ci \
+    && npx tsc
+
 FROM python:3.11-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -9,6 +18,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 COPY --from=node_runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=node_runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=pot_provider_builder /opt/bgutil-ytdlp-pot-provider /root/bgutil-ytdlp-pot-provider
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg ca-certificates libstdc++6 \
