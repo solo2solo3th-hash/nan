@@ -69,7 +69,7 @@ def handle_user_panel_callback(bot, call, alert) -> bool:
         keyboard = types.InlineKeyboardMarkup(row_width=1)
         keyboard.add(_member_button(
             "👥 أضفني إلى مجموعة",
-            url=f"https://t.me/{bot.get_me().username}?startgroup=true",
+            url=f"https://t.me/{bot.get_me().username}?startgroup=true&admin=delete_messages+invite_users",
         ))
         keyboard.add(_member_button(
             "📢 أضفني إلى قناة (تحديد الصلاحيات)",
