@@ -30,7 +30,13 @@ def user_panel_settings_markup():
 
 def start_markup(bot_username: str):
     keyboard = types.InlineKeyboardMarkup(row_width=1)
-    keyboard.add(_member_button("➕ أضفني إلى مجموعتك أو قناتك", url=f"https://t.me/{bot_username}?startgroup=true"))
+    # Group addition and channel administrator setup are separate Telegram flows.
+    keyboard.add(_member_button("➕ أضفني إلى مجموعتك", url=f"https://t.me/{bot_username}?startgroup=true"))
+    channel_admin_rights = "post_messages+edit_messages+delete_messages"
+    keyboard.add(_member_button(
+        "📢 أضفني إلى قناتك كمسؤول",
+        url=f"https://t.me/{bot_username}?startchannel&admin={channel_admin_rights}",
+    ))
     for name_key, url_key in (("CUSTOM_BTN1_NAME", "CUSTOM_BTN1_URL"), ("CUSTOM_BTN2_NAME", "CUSTOM_BTN2_URL")):
         name, url = setting_get(name_key), setting_get(url_key)
         if name and url and url.startswith(("https://", "http://", "tg://")):
