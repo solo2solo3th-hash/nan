@@ -450,14 +450,16 @@ def _catalog_search_queries(query: str) -> list[str]:
 
     # TIDAL and Qobuz are included as discovery/catalogue search pages.
     # Their private playback APIs are not used to bypass subscriptions or DRM.
-    for provider in ("tidal", "qobuz"):
+    # Public web discovery also covers Spotify, Apple Music, Deezer, TIDAL and
+    # Qobuz pages when their API is unavailable or credentials are not set.
+    for provider in CATALOG_SEARCH_DOMAINS:
         titles = _catalog_web_titles("duckduckgo", provider, query)
         if not titles:
             titles = _catalog_web_titles("bing", provider, query)
         for title in titles:
             add(title)
 
-    return variants[:10]
+    return variants[:6]
 
 
 def _search_candidates(query: str):
