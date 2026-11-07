@@ -775,8 +775,12 @@ def search_messages_markup():
     m = types.InlineKeyboardMarkup(row_width=1)
     m.add(_panel_button("✏️ تعديل رسالة الانتظار", callback_data="dev_searchmsg_wait_text"))
     m.add(_panel_button("✏️ تعديل رسالة الفشل", callback_data="dev_searchmsg_fail_text"))
-    m.add(_panel_button("✨ تعيين ملصق الانتظار Premium", callback_data="dev_searchmsg_wait_sticker"))
-    m.add(_panel_button("✨ تعيين ملصق الفشل Premium", callback_data="dev_searchmsg_fail_sticker"))
+    m.add(_panel_button("✨ تعيين إيموجي الانتظار Premium", callback_data="dev_searchmsg_wait_emoji"))
+    m.add(_panel_button("✨ تعيين إيموجي الفشل Premium", callback_data="dev_searchmsg_fail_emoji"))
+    m.add(_panel_button("🎟️ تعيين ملصق الانتظار Premium", callback_data="dev_searchmsg_wait_sticker"))
+    m.add(_panel_button("🎟️ تعيين ملصق الفشل Premium", callback_data="dev_searchmsg_fail_sticker"))
+    m.add(_panel_button("🗑️ إزالة إيموجي الانتظار", callback_data="dev_searchmsg_clear_wait_emoji"))
+    m.add(_panel_button("🗑️ إزالة إيموجي الفشل", callback_data="dev_searchmsg_clear_fail_emoji"))
     m.add(_panel_button("🗑️ إزالة ملصق الانتظار", callback_data="dev_searchmsg_clear_wait_sticker"))
     m.add(_panel_button("🗑️ إزالة ملصق الفشل", callback_data="dev_searchmsg_clear_fail_sticker"))
     m.add(_panel_button("👁️ معاينة الرسائل", callback_data="dev_searchmsg_preview"))
@@ -787,19 +791,24 @@ def search_messages_markup():
 def show_search_messages(bot, call):
     wait_text = setting_get("SEARCH_WAIT_TEXT") or "🔎 جاري البحث والتنزيل..."
     fail_text = setting_get("SEARCH_FAIL_TEXT") or "❌ فشل البحث أو تنزيل الأغنية. حاول مرة ثانية."
+    wait_emoji = bool((setting_get("SEARCH_WAIT_CUSTOM_EMOJI_ID") or "").strip())
+    fail_emoji = bool((setting_get("SEARCH_FAIL_CUSTOM_EMOJI_ID") or "").strip())
     wait_sticker = bool((setting_get("SEARCH_WAIT_STICKER_ID") or "").strip())
     fail_sticker = bool((setting_get("SEARCH_FAIL_STICKER_ID") or "").strip())
     bot.edit_message_text(
         "🎛️ التحكم برسائل البحث والتنزيل\n\n"
         f"🕒 رسالة الانتظار: {'مخصصة' if setting_get('SEARCH_WAIT_TEXT') else 'الافتراضية'}\n"
         f"❌ رسالة الفشل: {'مخصصة' if setting_get('SEARCH_FAIL_TEXT') else 'الافتراضية'}\n"
-        f"✨ ملصق الانتظار Premium: {'مضاف' if wait_sticker else 'غير مضاف'}\n"
-        f"✨ ملصق الفشل Premium: {'مضاف' if fail_sticker else 'غير مضاف'}\n\n"
-        "النص الحالي للانتظار:\n" + wait_text[:700] +
-        "\n\nالنص الحالي للفشل:\n" + fail_text[:700],
+        f"✨ إيموجي الانتظار Premium: {'مضاف' if wait_emoji else 'غير مضاف'}\n"
+        f"✨ إيموجي الفشل Premium: {'مضاف' if fail_emoji else 'غير مضاف'}\n"
+        f"🎟️ ملصق الانتظار Premium: {'مضاف' if wait_sticker else 'غير مضاف'}\n"
+        f"🎟️ ملصق الفشل Premium: {'مضاف' if fail_sticker else 'غير مضاف'}\n\n"
+        "النص الحالي للانتظار:\n" + wait_text[:500] +
+        "\n\nالنص الحالي للفشل:\n" + fail_text[:500],
         call.message.chat.id, call.message.message_id,
         reply_markup=search_messages_markup()
     )
+
 
 
 def show_playback_settings(bot, call):
@@ -1246,24 +1255,44 @@ def _handle_callback_impl(bot, call):
             call.message.chat.id, call.message.message_id,
             reply_markup=cancel_markup("dev_search_messages"))
         return True
+    if data in {"dev_searchmsg_wait_emoji", "dev_searchmsg_fail_emoji"}:
+        state = "searchmsg_wait_emoji" if data.endswith("wait_emoji") else "searchmsg_fail_emoji"
+        pending_input_set(call.from_user.id, state)
+        bot.answer_callback_query(call.id)
+        bot.edit_message_text(
+            "✨ أرسل رسالة تحتوي على إيموجي Premium مخصص واحد من لوحة الإيموجي.\\n"
+            "سيتم وضعه داخل نص رسالة الانتظار/الفشل.",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=cancel_markup("dev_search_messages"))
+        return True
     if data == "dev_searchmsg_wait_sticker":
         bot.answer_callback_query(call.id)
         pending_input_set(call.from_user.id, "searchmsg_wait_sticker")
-        bot.edit_message_text("✨ أرسل ملصق Telegram Premium الذي تريد إظهاره أثناء البحث.",
+        bot.edit_message_text("🎟️ أرسل ملصق Premium كملصق مستقل من لوحة الملصقات.",
             call.message.chat.id, call.message.message_id,
             reply_markup=cancel_markup("dev_search_messages"))
         return True
     if data == "dev_searchmsg_fail_sticker":
         bot.answer_callback_query(call.id)
         pending_input_set(call.from_user.id, "searchmsg_fail_sticker")
-        bot.edit_message_text("✨ أرسل ملصق Telegram Premium الذي تريد إظهاره عند فشل البحث.",
+        bot.edit_message_text("🎟️ أرسل ملصق Premium كملصق مستقل من لوحة الملصقات.",
             call.message.chat.id, call.message.message_id,
             reply_markup=cancel_markup("dev_search_messages"))
         return True
-    if data in {"dev_searchmsg_clear_wait_sticker", "dev_searchmsg_clear_fail_sticker"}:
-        key = "SEARCH_WAIT_STICKER_ID" if data.endswith("wait_sticker") else "SEARCH_FAIL_STICKER_ID"
-        setting_set(key, "")
-        bot.answer_callback_query(call.id, "🗑️ تمت إزالة الملصق.")
+    if data in {
+        "dev_searchmsg_clear_wait_sticker", "dev_searchmsg_clear_fail_sticker",
+        "dev_searchmsg_clear_wait_emoji", "dev_searchmsg_clear_fail_emoji"
+    }:
+        is_wait = "_wait_" in data
+        prefix = "SEARCH_WAIT_" if is_wait else "SEARCH_FAIL_"
+        if data.endswith("_sticker"):
+            setting_set(prefix + "STICKER_ID", "")
+            notice = "🗑️ تمت إزالة الملصق."
+        else:
+            setting_set(prefix + "CUSTOM_EMOJI_ID", "")
+            setting_set(prefix + "CUSTOM_EMOJI_CHAR", "")
+            notice = "🗑️ تمت إزالة إيموجي Premium."
+        bot.answer_callback_query(call.id, notice)
         show_search_messages(bot, call)
         return True
     if data == "dev_searchmsg_preview":
@@ -1401,15 +1430,37 @@ def handle_input(bot, message):
         bot.reply_to(message, "✅ تم حفظ الرسالة." if value.upper() != "OFF" else "✅ تمت إعادة الرسالة إلى النص الافتراضي.")
         return True
 
+    if state in {"searchmsg_wait_emoji", "searchmsg_fail_emoji"}:
+        entities = getattr(message, "entities", None) or []
+        raw_text = getattr(message, "text", None) or ""
+        custom = next((
+            entity for entity in entities
+            if getattr(entity, "type", None) == "custom_emoji"
+            and getattr(entity, "custom_emoji_id", None)
+        ), None)
+        if not custom or not raw_text:
+            bot.reply_to(message, "❌ أرسل إيموجي Premium مخصصاً داخل رسالة نصية، وليس ملصقاً مستقلاً.")
+            return True
+        encoded = raw_text.encode("utf-16-le")
+        start = custom.offset * 2
+        end = (custom.offset + custom.length) * 2
+        emoji_char = encoded[start:end].decode("utf-16-le")
+        prefix = "SEARCH_WAIT_" if state == "searchmsg_wait_emoji" else "SEARCH_FAIL_"
+        setting_set(prefix + "CUSTOM_EMOJI_ID", str(custom.custom_emoji_id))
+        setting_set(prefix + "CUSTOM_EMOJI_CHAR", emoji_char)
+        pending_input_set(message.from_user.id, None)
+        bot.reply_to(message, "✅ تم حفظ إيموجي Premium وسيظهر داخل نص الرسالة.")
+        return True
+
     if state in {"searchmsg_wait_sticker", "searchmsg_fail_sticker"}:
         sticker = getattr(message, "sticker", None)
         if not sticker:
-            bot.reply_to(message, "❌ أرسل ملصقاً فقط. يمكن استخدام ملصقات Premium.")
+            bot.reply_to(message, "❌ أرسل ملصقاً من لوحة الملصقات. لا ترسل إيموجي داخل النص هنا.")
             return True
         key = "SEARCH_WAIT_STICKER_ID" if state == "searchmsg_wait_sticker" else "SEARCH_FAIL_STICKER_ID"
         setting_set(key, sticker.file_id)
         pending_input_set(message.from_user.id, None)
-        bot.reply_to(message, "✅ تم حفظ الملصق.")
+        bot.reply_to(message, "✅ تم حفظ الملصق. سيظهر مباشرة بعد رسالة الحالة.")
         return True
 
     if state in {"waiting_assistant_phone", "waiting_assistant_code", "waiting_assistant_password"} and message.chat.type != "private":
