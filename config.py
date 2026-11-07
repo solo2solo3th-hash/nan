@@ -64,6 +64,9 @@ CALLS_READY_TIMEOUT = max(10, _int_env("CALLS_READY_TIMEOUT", 90))
 # Keep the existing Railway variable name. Do not put its value in GitHub.
 YOUTUBE_COOKIES = os.getenv("YOUTUBE_COOKIES", "")
 YOUTUBE_COOKIES_B64 = os.getenv("YOUTUBE_COOKIES_B64", "")
+# Optional Spotify Web API app credentials for catalogue metadata search.
+SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID", "").strip()
+SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET", "").strip()
 YOUTUBE_PO_TOKEN = os.getenv("YOUTUBE_PO_TOKEN", "").strip()
 
 # Ten supported audio-source targets. Direct URLs are routed to their exact
