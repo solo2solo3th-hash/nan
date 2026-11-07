@@ -69,7 +69,7 @@ _ACTIVE_SOURCE_ORDER = tuple(dict.fromkeys(
 # often return company profiles/pages instead of playable audio posts.
 _SEARCHABLE_SOURCE_ORDER = tuple(
     source for source in _ACTIVE_SOURCE_ORDER
-    if source not in {"facebook", "instagram", "tiktok", "twitter", "reddit", "twitch"}
+    if source not in {"facebook", "twitter", "reddit", "twitch"}
 )
 
 SEARCH_DOMAINS = {
