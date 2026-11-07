@@ -1260,7 +1260,7 @@ def _handle_callback_impl(bot, call):
         pending_input_set(call.from_user.id, state)
         bot.answer_callback_query(call.id)
         bot.edit_message_text(
-            "✨ أرسل رسالة تحتوي على إيموجي Premium مخصص واحد من لوحة الإيموجي.\\n"
+            "✨ أرسل رسالة تحتوي على إيموجي Premium مخصص واحد من لوحة الإيموجي.\n"
             "سيتم وضعه داخل نص رسالة الانتظار/الفشل.",
             call.message.chat.id, call.message.message_id,
             reply_markup=cancel_markup("dev_search_messages"))
@@ -1297,17 +1297,32 @@ def _handle_callback_impl(bot, call):
         return True
     if data == "dev_searchmsg_preview":
         bot.answer_callback_query(call.id)
-        wait_text = setting_get("SEARCH_WAIT_TEXT") or "🔎 جاري البحث والتنزيل..."
-        fail_text = setting_get("SEARCH_FAIL_TEXT") or "❌ فشل البحث أو تنزيل الأغنية. حاول مرة ثانية."
-        bot.send_message(call.message.chat.id, wait_text)
-        wait_sticker = (setting_get("SEARCH_WAIT_STICKER_ID") or "").strip()
-        if wait_sticker:
-            bot.send_sticker(call.message.chat.id, wait_sticker)
-        bot.send_message(call.message.chat.id, fail_text)
-        fail_sticker = (setting_get("SEARCH_FAIL_STICKER_ID") or "").strip()
-        if fail_sticker:
-            bot.send_sticker(call.message.chat.id, fail_sticker)
+        chat_id = call.message.chat.id
+        for prefix, default_text in (
+            ("SEARCH_WAIT_", "🔎 جاري البحث والتنزيل..."),
+            ("SEARCH_FAIL_", "❌ فشل البحث أو تنزيل الأغنية. حاول مرة ثانية."),
+        ):
+            text_value = (setting_get(prefix + "TEXT") or default_text).strip() or default_text
+            emoji_id = (setting_get(prefix + "CUSTOM_EMOJI_ID") or "").strip()
+            emoji_char = setting_get(prefix + "CUSTOM_EMOJI_CHAR") or "✨"
+            entities = None
+            if emoji_id:
+                offset = len(text_value.encode("utf-16-le")) // 2
+                length = len(emoji_char.encode("utf-16-le")) // 2
+                entities = [types.MessageEntity(type="custom_emoji", offset=offset, length=length, custom_emoji_id=emoji_id)]
+            try:
+                bot.send_message(chat_id, text_value + (emoji_char if emoji_id else ""), entities=entities)
+            except Exception:
+                log.exception("Custom emoji preview failed; sending plain text")
+                bot.send_message(chat_id, text_value + (emoji_char if emoji_id else ""))
+            sticker_id = (setting_get(prefix + "STICKER_ID") or "").strip()
+            if sticker_id:
+                try:
+                    bot.send_sticker(chat_id, sticker_id)
+                except Exception:
+                    log.exception("Could not send search-message preview sticker")
         return True
+
     if data == "dev_playback_settings":
         bot.answer_callback_query(call.id)
         show_playback_settings(bot, call)
