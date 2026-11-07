@@ -1323,6 +1323,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                         _send_search_failure(
                             bot, chat_id,
                             "❌ نينو، فشل إرسال الملف الصوتي. حاول مرة ثانية.",
+                            message.message_id,
                         )
                     except Exception:
                         log.exception("Failed to send audio error notice")
