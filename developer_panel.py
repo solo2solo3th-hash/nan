@@ -1479,7 +1479,7 @@ def handle_input(bot, message):
         ]
         fail_phrases = []
         global_offset = 0
-        for raw_line in value.split("\\n"):
+        for raw_line in value.split("\n"):
             line = raw_line.strip()
             leading = len(raw_line) - len(raw_line.lstrip())
             leading_units = len(raw_line[:leading].encode("utf-16-le")) // 2
