@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 import re
 import shutil
 import stat
@@ -21,6 +22,8 @@ from config import (
     SOCKET_TIMEOUT,
     YOUTUBE_COOKIES,
     YOUTUBE_COOKIES_B64,
+    SPOTIFY_CLIENT_ID,
+    SPOTIFY_CLIENT_SECRET,
 )
 
 _NETSCAPE_COOKIE_HEADERS = ("# HTTP Cookie File", "# Netscape HTTP Cookie File")
@@ -65,6 +68,16 @@ _ACTIVE_SOURCE_ORDER = tuple(dict.fromkeys(
 SEARCH_DOMAINS = {
     source: hosts[0].removeprefix("www.")
     for source, hosts in SOURCE_HOSTS.items()
+}
+
+# Streaming catalogues are search/metadata providers only. Their subscriptions
+# and DRM-protected streams are not treated as downloadable audio sources.
+CATALOG_SEARCH_DOMAINS = {
+    "spotify": "open.spotify.com",
+    "deezer": "deezer.com",
+    "apple_music": "music.apple.com",
+    "tidal": "tidal.com",
+    "qobuz": "qobuz.com",
 }
 
 # yt-dlp may leave audio in any of these formats before FFmpeg normalization.
@@ -321,19 +334,146 @@ def _web_search_candidates(source: str, query: str) -> list[str]:
     return results
 
 
-def _search_candidates(query: str):
-    """Search every configured source, not only YouTube and SoundCloud."""
-    # Native search extractors are faster and more accurate where yt-dlp
-    # provides them. Other sources are discovered through domain-restricted
-    # web searches, then handed to that site's normal yt-dlp extractor.
-    for source in _ACTIVE_SOURCE_ORDER:
-        if source == "youtube":
-            yield source, f"ytsearch1:{query}"
-        elif source == "soundcloud":
-            yield source, f"scsearch1:{query}"
+def _catalog_web_titles(engine: str, source: str, query: str) -> list[str]:
+    """Extract a few track-like titles from streaming-catalog search pages."""
+    domain = CATALOG_SEARCH_DOMAINS[source]
+    search_text = f"site:{domain} {query}"
+    if engine == "duckduckgo":
+        url = "https://html.duckduckgo.com/html/?q=" + quote_plus(search_text)
+    else:
+        url = "https://www.bing.com/search?q=" + quote_plus(search_text)
 
-    # Include web-search fallbacks for YouTube and SoundCloud too. This matters
-    # when their native search endpoints are blocked but public result pages load.
+    req = Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+    )
+    try:
+        with urlopen(req, timeout=min(max(int(SOCKET_TIMEOUT), 1), 4)) as response:
+            html = response.read(900_000).decode("utf-8", errors="ignore")
+    except Exception:
+        return []
+
+    if engine == "duckduckgo":
+        snippets = re.findall(
+            r'<a[^>]+class="result__a"[^>]*>(.*?)</a>',
+            html, flags=re.IGNORECASE | re.DOTALL,
+        )
+    else:
+        snippets = re.findall(
+            r'<h2[^>]*>\s*<a[^>]*>(.*?)</a>',
+            html, flags=re.IGNORECASE | re.DOTALL,
+        )
+
+    titles = []
+    for snippet in snippets:
+        title = unescape(re.sub(r"<[^>]+>", " ", snippet))
+        title = re.sub(r"\s+", " ", title).strip()
+        title = re.sub(r"\s*[|·-]\s*(Spotify|TIDAL|Qobuz|Deezer|Apple Music).*$", "", title, flags=re.IGNORECASE)
+        if len(title) >= 4 and title.lower() not in {item.lower() for item in titles}:
+            titles.append(title[:180])
+        if len(titles) >= 3:
+            break
+    return titles
+
+
+def _catalog_search_queries(query: str) -> list[str]:
+    """Expand a music query with metadata from public/authorized music catalogues."""
+    variants = []
+    seen = {query.casefold()}
+
+    def add(title: str, artist: str = "") -> None:
+        value = " ".join(part.strip() for part in (title, artist) if part and part.strip())
+        value = re.sub(r"\s+", " ", value).strip()
+        if len(value) >= 3 and value.casefold() not in seen:
+            seen.add(value.casefold())
+            variants.append(value)
+
+    headers = {"User-Agent": "NAN-Telegram-Music-Bot/1.0"}
+
+    # Deezer's public catalogue search does not require a user session.
+    try:
+        url = "https://api.deezer.com/search/track?q=" + quote_plus(query) + "&limit=5"
+        req = Request(url, headers=headers)
+        with urlopen(req, timeout=min(max(int(SOCKET_TIMEOUT), 1), 4)) as response:
+            payload = json.loads(response.read(1_000_000).decode("utf-8", errors="ignore"))
+        for item in payload.get("data", []):
+            add(item.get("title", ""), (item.get("artist") or {}).get("name", ""))
+    except Exception:
+        pass
+
+    # Apple's public iTunes Search endpoint supplies track and artist metadata.
+    try:
+        url = (
+            "https://itunes.apple.com/search?entity=song&limit=5&country=US&term="
+            + quote_plus(query)
+        )
+        req = Request(url, headers=headers)
+        with urlopen(req, timeout=min(max(int(SOCKET_TIMEOUT), 1), 4)) as response:
+            payload = json.loads(response.read(1_000_000).decode("utf-8", errors="ignore"))
+        for item in payload.get("results", []):
+            add(item.get("trackName", ""), item.get("artistName", ""))
+    except Exception:
+        pass
+
+    # Spotify's official catalogue API requires app credentials. If configured,
+    # use client-credentials auth; never hard-code secrets in the repository.
+    if SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET:
+        try:
+            token_req = Request(
+                "https://accounts.spotify.com/api/token",
+                data=b"grant_type=client_credentials",
+                headers={
+                    "Authorization": "Basic " + base64.b64encode(
+                        f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()
+                    ).decode(),
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                method="POST",
+            )
+            with urlopen(token_req, timeout=min(max(int(SOCKET_TIMEOUT), 1), 4)) as response:
+                token = json.loads(response.read(100_000).decode("utf-8"))["access_token"]
+            search_req = Request(
+                "https://api.spotify.com/v1/search?type=track&limit=5&q=" + quote_plus(query),
+                headers={"Authorization": "Bearer " + token, **headers},
+            )
+            with urlopen(search_req, timeout=min(max(int(SOCKET_TIMEOUT), 1), 4)) as response:
+                payload = json.loads(response.read(1_000_000).decode("utf-8", errors="ignore"))
+            for item in (payload.get("tracks") or {}).get("items", []):
+                add(item.get("name", ""), ", ".join(
+                    artist.get("name", "") for artist in item.get("artists", [])
+                ))
+        except Exception:
+            pass
+
+    # TIDAL and Qobuz are included as discovery/catalogue search pages.
+    # Their private playback APIs are not used to bypass subscriptions or DRM.
+    for provider in ("tidal", "qobuz"):
+        titles = _catalog_web_titles("duckduckgo", provider, query)
+        if not titles:
+            titles = _catalog_web_titles("bing", provider, query)
+        for title in titles:
+            add(title)
+
+    return variants[:10]
+
+
+def _search_candidates(query: str):
+    """Search native audio extractors, enriched by music catalogue metadata."""
+    expanded_queries = [query] + _catalog_search_queries(query)
+
+    # Search native providers with the original phrase and catalogue-derived
+    # title/artist variants, which helps when users enter partial or misspelled names.
+    for search_query in expanded_queries:
+        for source in _ACTIVE_SOURCE_ORDER:
+            if source == "youtube":
+                yield source, f"ytsearch1:{search_query}"
+            elif source == "soundcloud":
+                yield source, f"scsearch1:{search_query}"
+
+    # Search all configured downloadable source domains with the original query.
     for source in _ACTIVE_SOURCE_ORDER:
         for candidate in _web_search_candidates(source, query):
             yield source, candidate
