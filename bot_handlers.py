@@ -52,6 +52,43 @@ def _set_bot_commands(bot) -> None:
 
 _BOT_LOGO_FILE_ID = None
 
+
+def _send_search_status(bot, chat_id, reply_to_message_id=None, default_text="🔎 جاري البحث والتنزيل..."):
+    text = (setting_get("SEARCH_WAIT_TEXT") or default_text).strip() or default_text
+    status = bot.send_message(chat_id, text, reply_to_message_id=reply_to_message_id)
+    sticker_id = (setting_get("SEARCH_WAIT_STICKER_ID") or "").strip()
+    sticker_message = None
+    if sticker_id:
+        try:
+            sticker_message = bot.send_sticker(chat_id, sticker_id)
+        except Exception:
+            log.exception("Could not send configured search-wait sticker")
+    return status, sticker_message
+
+
+def _delete_search_status(bot, chat_id, status):
+    if not status:
+        return
+    items = status if isinstance(status, tuple) else (status,)
+    for item in items:
+        if item is not None:
+            try:
+                bot.delete_message(chat_id, item.message_id)
+            except Exception:
+                pass
+
+
+def _send_search_failure(bot, chat_id, default_text, reply_to_message_id=None):
+    text = (setting_get("SEARCH_FAIL_TEXT") or default_text).strip() or default_text
+    sent = bot.send_message(chat_id, text, reply_to_message_id=reply_to_message_id)
+    sticker_id = (setting_get("SEARCH_FAIL_STICKER_ID") or "").strip()
+    if sticker_id:
+        try:
+            bot.send_sticker(chat_id, sticker_id)
+        except Exception:
+            log.exception("Could not send configured search-failure sticker")
+    return sent
+
 def _chat_link(bot, chat) -> str:
     """Return a stable public/primary link for a group or channel when Telegram exposes one."""
     username = getattr(chat, "username", None)
@@ -795,7 +832,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             bot.reply_to(message, "🎵 استخدم: /play اسم الأغنية أو رابطها")
             return
         bot.send_chat_action(message.chat.id, "typing")
-        status = bot.reply_to(message, "نينو يحبك ويكلك نتضر في حالة الانتضار ⏳")
+        status = _send_search_status(bot, message.chat.id, message.message_id, "نينو يحبك ويكلك نتضر في حالة الانتضار ⏳")
         try:
             info, path, job = download_audio(parts[1])
             track = Track(
@@ -817,16 +854,14 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             else:
                 bot.send_message(message.chat.id, f"➕ تمت الإضافة: {track.title}\n📋 الترتيب: {position}")
                 _notify_play(bot, message, track, queued=True)
-            try: bot.delete_message(message.chat.id, status.message_id)
-            except Exception: pass
         except RuntimeError as exc:
             if str(exc) == "QUEUE_FULL":
                 bot.send_message(message.chat.id, "❌ قائمة التشغيل ممتلئة.")
             else:
                 log.exception("play/runtime failed")
                 slot = calls.assigned_slot(message.chat.id) or calls.selected_slot
-                bot.send_message(
-                    message.chat.id,
+                _send_search_failure(
+                    bot, message.chat.id,
                     f"❌ تعذر تشغيل الأغنية بواسطة المساعد رقم {slot}.\n"
                     f"السبب: {exc}\n"
                     "تأكد أن المساعد موجود بالمجموعة، وأن البوت مشرف ويملك صلاحية إنشاء رابط دعوة إذا كانت المجموعة خاصة."
@@ -838,11 +873,13 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             # notice and URL button instead of a generic playback error.
             if _assistant_banned_message(message):
                 return
-            bot.send_message(
-                message.chat.id,
+            _send_search_failure(
+                bot, message.chat.id,
                 "❌ فشل البحث أو تجهيز الأغنية قبل تشغيلها.\n"
                 f"التفاصيل: {type(exc).__name__}: {exc}"
             )
+        finally:
+            _delete_search_status(bot, message.chat.id, status)
 
     @bot.message_handler(commands=["skip", "next"])
     def skip_handler(message):
@@ -1143,7 +1180,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                 if not arg:
                     return _play_replied_audio(message)
                 bot.send_chat_action(chat_id, "typing")
-                status = bot.reply_to(message, "🔎 جاري البحث والتنزيل...")
+                status = _send_search_status(bot, chat_id, message.message_id, "🔎 جاري البحث والتنزيل...")
                 job = None
                 owns_job = True
                 try:
@@ -1174,8 +1211,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                         cleanup_job(job)
                     raise
                 finally:
-                    try: bot.delete_message(chat_id, status.message_id)
-                    except Exception: pass
+                    _delete_search_status(bot, chat_id, status)
                 return True
 
             if action == "download":
@@ -1187,7 +1223,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                     bot.send_chat_action(chat_id, "upload_audio", timeout=10)
                 except Exception as action_exc:
                     log.warning("Could not send upload_audio chat action in chat %s: %s", chat_id, action_exc)
-                status = bot.reply_to(message, "نينو يحبك ويكلك نتضر في حالة الانتضار ⏳")
+                status = _send_search_status(bot, chat_id, message.message_id, "نينو يحبك ويكلك نتضر في حالة الانتضار ⏳")
                 job = None
                 try:
                     info, path, job = download_audio(arg)
@@ -1232,16 +1268,15 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                     # Do not reply to the original message: Telegram may no longer
                     # have it available as a reply target.
                     try:
-                        bot.send_message(
-                            chat_id,
+                        _send_search_failure(
+                            bot, chat_id,
                             "❌ نينو، فشل إرسال الملف الصوتي. حاول مرة ثانية.",
                         )
                     except Exception:
                         log.exception("Failed to send audio error notice")
                 finally:
                     cleanup_job(job)
-                    try: bot.delete_message(chat_id, status.message_id)
-                    except Exception: pass
+                    _delete_search_status(bot, chat_id, status)
                 return True
 
             if action == "skip":
@@ -1306,7 +1341,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                 bot.reply_to(message, "❌ قائمة التشغيل ممتلئة.")
             else:
                 _notify_error(bot, exc, f"أمر الموسيقى: {raw}", message)
-                bot.reply_to(message, "نينو يكول شكد فكر فشلت محاولتك ❌")
+                _send_search_failure(bot, chat_id, "نينو يكول شكد فكر فشلت محاولتك ❌", message.message_id)
         except Exception as exc:
             log.exception("natural music command failed: %s", raw)
             _notify_error(bot, exc, f"أمر الموسيقى: {raw}", message)
@@ -1314,7 +1349,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             # report the ban only during the actual assistant join operation.
             if action == "play" and _assistant_banned_message(message):
                 return True
-            bot.reply_to(message, "نينو يكول شكد فكر فشلت محاولتك ❌")
+            _send_search_failure(bot, chat_id, "نينو يكول شكد فكر فشلت محاولتك ❌", message.message_id)
         return True
 
     @bot.message_handler(content_types=["text", "photo", "animation", "sticker", "audio", "document", "video", "voice", "video_note"])
