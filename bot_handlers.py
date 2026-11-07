@@ -104,6 +104,36 @@ def _delete_search_status(bot, chat_id, status):
 
 
 def _send_search_failure(bot, chat_id, default_text, reply_to_message_id=None):
+    phrase = None
+    try:
+        phrases = json.loads(setting_get("SEARCH_FAIL_PHRASES") or "[]")
+        if isinstance(phrases, list) and phrases:
+            phrase = random.choice(phrases)
+    except Exception:
+        log.exception("Could not read configured search-failure phrases")
+    if phrase:
+        text = (phrase.get("text") or default_text).strip() or default_text
+        entities = [
+            types.MessageEntity(
+                type="custom_emoji",
+                offset=item["offset"],
+                length=item["length"],
+                custom_emoji_id=item["custom_emoji_id"]
+            )
+            for item in phrase.get("entities", [])
+        ]
+        try:
+            return bot.send_message(
+                chat_id, text, reply_to_message_id=reply_to_message_id,
+                entities=entities or None
+            )
+        except Exception:
+            if not entities:
+                raise
+            log.exception("Premium custom emoji in failure phrase failed; sending plain text")
+            return bot.send_message(
+                chat_id, text, reply_to_message_id=reply_to_message_id
+            )
     text = (setting_get("SEARCH_FAIL_TEXT") or default_text).strip() or default_text
     return bot.send_message(chat_id, text, reply_to_message_id=reply_to_message_id)
 
