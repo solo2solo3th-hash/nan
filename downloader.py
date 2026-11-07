@@ -65,6 +65,13 @@ _ACTIVE_SOURCE_ORDER = tuple(dict.fromkeys(
     + [name for name in _EXTRA_SOURCE_ORDER if name not in AUDIO_SOURCE_ORDER]
 ))
 
+# Social networks remain supported for direct URLs, but general web searches
+# often return company profiles/pages instead of playable audio posts.
+_SEARCHABLE_SOURCE_ORDER = tuple(
+    source for source in _ACTIVE_SOURCE_ORDER
+    if source not in {"facebook", "instagram", "tiktok", "twitter", "reddit", "twitch"}
+)
+
 SEARCH_DOMAINS = {
     source: hosts[0].removeprefix("www.")
     for source, hosts in SOURCE_HOSTS.items()
@@ -469,14 +476,14 @@ def _search_candidates(query: str):
     # Search native providers with the original phrase and catalogue-derived
     # title/artist variants, which helps when users enter partial or misspelled names.
     for search_query in expanded_queries:
-        for source in _ACTIVE_SOURCE_ORDER:
+        for source in _SEARCHABLE_SOURCE_ORDER:
             if source == "youtube":
                 yield source, f"ytsearch1:{search_query}"
             elif source == "soundcloud":
                 yield source, f"scsearch1:{search_query}"
 
     # Search all configured downloadable source domains with the original query.
-    for source in _ACTIVE_SOURCE_ORDER:
+    for source in _SEARCHABLE_SOURCE_ORDER:
         for candidate in _web_search_candidates(source, query):
             yield source, candidate
 
