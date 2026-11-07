@@ -240,9 +240,9 @@ def _search_engine_candidates(engine: str, source: str, query: str) -> list[str]
 
     search_text = f"site:{domain} {query}"
     if engine == "duckduckgo":
-        url = "https://html.duckduckgo.com/html/?" + quote_plus("q=" + search_text)
+        url = "https://html.duckduckgo.com/html/?q=" + quote_plus(search_text)
     elif engine == "bing":
-        url = "https://www.bing.com/search?" + quote_plus("q=" + search_text)
+        url = "https://www.bing.com/search?q=" + quote_plus(search_text)
     else:
         return []
 
