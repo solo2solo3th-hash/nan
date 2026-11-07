@@ -232,74 +232,111 @@ def _source_options(job: Path, source: str) -> dict:
     return options
 
 
-def _web_search_candidate(source: str, query: str) -> str | None:
+def _search_engine_candidates(engine: str, source: str, query: str) -> list[str]:
+    """Find playable pages for one source using a general web search engine."""
     domain = SEARCH_DOMAINS.get(source)
     if not domain:
-        return None
+        return []
 
-    url = (
-        "https://html.duckduckgo.com/html/?q="
-        + quote_plus(f"site:{domain} {query}")
-    )
+    search_text = f"site:{domain} {query}"
+    if engine == "duckduckgo":
+        url = "https://html.duckduckgo.com/html/?" + quote_plus("q=" + search_text)
+    elif engine == "bing":
+        url = "https://www.bing.com/search?" + quote_plus("q=" + search_text)
+    else:
+        return []
+
     req = Request(
         url,
         headers={
             "User-Agent": (
-                "Mozilla/5.0 (compatible; TelegramMusicBot/1.0)"
-            )
+                "Mozilla/5.0 (X11; Linux x86_64) "
+                "AppleWebKit/537.36 Chrome/124.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
         },
     )
 
     try:
-        # Keep discovery bounded: a slow search engine must not stall the bot.
-        with urlopen(req, timeout=min(max(int(SOCKET_TIMEOUT), 1), 5)) as response:
-            html = response.read().decode("utf-8", errors="ignore")
+        # Bound each search request so a blocked search engine cannot stall the bot.
+        with urlopen(req, timeout=min(max(int(SOCKET_TIMEOUT), 1), 4)) as response:
+            html = response.read(1_500_000).decode("utf-8", errors="ignore")
     except Exception:
-        return None
+        return []
 
-    for pattern in (
-        # DuckDuckGo's current redirect parameter is "uddg"; keep the
-        # legacy spelling as a compatibility fallback.
-        r'uddg=([^"&]+)',
-        r'nuddg=([^"&]+)',
-        r'class="result__a"[^>]+href="([^"]+)"',
+    found = []
+    seen = set()
+    for raw_href in re.findall(
+        r"""href\s*=\s*["']([^"']+)["']""",
+        html,
+        flags=re.IGNORECASE,
     ):
-        for match in re.findall(pattern, html, flags=re.IGNORECASE):
-            candidate = unescape(unquote(match))
+        candidate = unescape(raw_href).replace("&amp;", "&")
+        if candidate.startswith("//"):
+            candidate = "https:" + candidate
 
-            if candidate.startswith("//"):
-                candidate = "https:" + candidate
+        try:
+            parsed = urlparse(candidate)
+            params = dict(
+                item.split("=", 1) for item in parsed.query.split("&") if "=" in item
+            )
+            if engine == "duckduckgo" and params.get("uddg"):
+                candidate = unquote(params["uddg"])
+            elif engine == "bing" and params.get("u", "").startswith("a1"):
+                encoded = params["u"][2:]
+                padding = "=" * (-len(encoded) % 4)
+                decoded = base64.urlsafe_b64decode(encoded + padding).decode(
+                    "utf-8", errors="ignore"
+                )
+                if decoded.startswith(("http://", "https://")):
+                    candidate = decoded
+        except Exception:
+            pass
 
-            if (
-                candidate.startswith("http")
-                and _source_for_url(candidate) == source
-            ):
-                return candidate
+        candidate = unquote(candidate).split("#", 1)[0]
+        if (
+            candidate.startswith(("http://", "https://"))
+            and _source_for_url(candidate) == source
+            and candidate not in seen
+        ):
+            seen.add(candidate)
+            found.append(candidate)
+            if len(found) >= 3:
+                break
 
-    return None
+    return found
+
+
+def _web_search_candidates(source: str, query: str) -> list[str]:
+    """Try more than one search engine and return several source-specific pages."""
+    results = []
+    seen = set()
+    for engine in ("duckduckgo", "bing"):
+        for candidate in _search_engine_candidates(engine, source, query):
+            if candidate not in seen:
+                seen.add(candidate)
+                results.append(candidate)
+        if len(results) >= 5:
+            break
+    return results
 
 
 def _search_candidates(query: str):
-    """Yield candidates lazily so one slow website cannot delay all downloads."""
-    native = {"youtube", "soundcloud"}
-
-    # Try native yt-dlp search extractors first; these are the most useful
-    # general-purpose music search sources.
+    """Search every configured source, not only YouTube and SoundCloud."""
+    # Native search extractors are faster and more accurate where yt-dlp
+    # provides them. Other sources are discovered through domain-restricted
+    # web searches, then handed to that site's normal yt-dlp extractor.
     for source in _ACTIVE_SOURCE_ORDER:
         if source == "youtube":
             yield source, f"ytsearch1:{query}"
         elif source == "soundcloud":
             yield source, f"scsearch1:{query}"
 
-    # Discover other sources only after native sources have failed.
-    # Yield lazily: do not wait on every search domain before trying a download.
+    # Include web-search fallbacks for YouTube and SoundCloud too. This matters
+    # when their native search endpoints are blocked but public result pages load.
     for source in _ACTIVE_SOURCE_ORDER:
-        if source in native or source not in SOURCE_HOSTS:
-            continue
-        found = _web_search_candidate(source, query)
-        if found:
-            yield source, found
-
+        for candidate in _web_search_candidates(source, query):
+            yield source, candidate
 
 def _download_one(source: str, target: str, job: Path):
     import yt_dlp
@@ -556,7 +593,7 @@ def download_audio(query: str):
 
         raise RuntimeError(
             "No searchable source succeeded. "
-            + " | ".join(errors[-10:])
+            + " | ".join(errors[-25:])
             if errors
             else "No searchable source is configured"
         )
