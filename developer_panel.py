@@ -116,6 +116,7 @@ def main_markup():
         _panel_button("🎛️ لوحة التشغيل", callback_data="dev_playback_settings"),
     )
     m.add(_panel_button("💬 أوامر الشات", callback_data="dev_chat_commands"))
+    m.add(_panel_button("🎛️ التحكم برسائل البحث", callback_data="dev_search_messages"))
     m.add(_panel_button("🤖 التلقائي", callback_data="auto_menu"))
     m.add(_panel_button("👥 المساعدين", callback_data="dev_assistants"))
     m.add(
@@ -770,6 +771,37 @@ def show_chat_commands(bot, call):
         reply_markup=chat_commands_markup(), parse_mode="HTML"
     )
 
+def search_messages_markup():
+    m = types.InlineKeyboardMarkup(row_width=1)
+    m.add(_panel_button("✏️ تعديل رسالة الانتظار", callback_data="dev_searchmsg_wait_text"))
+    m.add(_panel_button("✏️ تعديل رسالة الفشل", callback_data="dev_searchmsg_fail_text"))
+    m.add(_panel_button("✨ تعيين ملصق الانتظار Premium", callback_data="dev_searchmsg_wait_sticker"))
+    m.add(_panel_button("✨ تعيين ملصق الفشل Premium", callback_data="dev_searchmsg_fail_sticker"))
+    m.add(_panel_button("🗑️ إزالة ملصق الانتظار", callback_data="dev_searchmsg_clear_wait_sticker"))
+    m.add(_panel_button("🗑️ إزالة ملصق الفشل", callback_data="dev_searchmsg_clear_fail_sticker"))
+    m.add(_panel_button("👁️ معاينة الرسائل", callback_data="dev_searchmsg_preview"))
+    m.add(_panel_button("↩️ رجوع", callback_data="back_to_main"))
+    return m
+
+
+def show_search_messages(bot, call):
+    wait_text = setting_get("SEARCH_WAIT_TEXT") or "🔎 جاري البحث والتنزيل..."
+    fail_text = setting_get("SEARCH_FAIL_TEXT") or "❌ فشل البحث أو تنزيل الأغنية. حاول مرة ثانية."
+    wait_sticker = bool((setting_get("SEARCH_WAIT_STICKER_ID") or "").strip())
+    fail_sticker = bool((setting_get("SEARCH_FAIL_STICKER_ID") or "").strip())
+    bot.edit_message_text(
+        "🎛️ التحكم برسائل البحث والتنزيل\n\n"
+        f"🕒 رسالة الانتظار: {'مخصصة' if setting_get('SEARCH_WAIT_TEXT') else 'الافتراضية'}\n"
+        f"❌ رسالة الفشل: {'مخصصة' if setting_get('SEARCH_FAIL_TEXT') else 'الافتراضية'}\n"
+        f"✨ ملصق الانتظار Premium: {'مضاف' if wait_sticker else 'غير مضاف'}\n"
+        f"✨ ملصق الفشل Premium: {'مضاف' if fail_sticker else 'غير مضاف'}\n\n"
+        "النص الحالي للانتظار:\n" + wait_text[:700] +
+        "\n\nالنص الحالي للفشل:\n" + fail_text[:700],
+        call.message.chat.id, call.message.message_id,
+        reply_markup=search_messages_markup()
+    )
+
+
 def show_playback_settings(bot, call):
     from database import setting_get
     credit_name = setting_get("PLAY_CREDIT_NAME") or "غير محدد"
@@ -1195,6 +1227,58 @@ def _handle_callback_impl(bot, call):
         bot.answer_callback_query(call.id, "✅ تم مسح إعدادات أغنية الجات.")
         show_jat_audio(bot, call)
         return True
+    if data == "dev_search_messages":
+        pending_input_set(call.from_user.id, None)
+        bot.answer_callback_query(call.id)
+        show_search_messages(bot, call)
+        return True
+    if data == "dev_searchmsg_wait_text":
+        bot.answer_callback_query(call.id)
+        pending_input_set(call.from_user.id, "searchmsg_wait_text")
+        bot.edit_message_text("✏️ أرسل نص رسالة الانتظار الجديدة. أرسل OFF لإرجاع النص الافتراضي.",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=cancel_markup("dev_search_messages"))
+        return True
+    if data == "dev_searchmsg_fail_text":
+        bot.answer_callback_query(call.id)
+        pending_input_set(call.from_user.id, "searchmsg_fail_text")
+        bot.edit_message_text("✏️ أرسل نص رسالة الفشل الجديدة. أرسل OFF لإرجاع النص الافتراضي.",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=cancel_markup("dev_search_messages"))
+        return True
+    if data == "dev_searchmsg_wait_sticker":
+        bot.answer_callback_query(call.id)
+        pending_input_set(call.from_user.id, "searchmsg_wait_sticker")
+        bot.edit_message_text("✨ أرسل ملصق Telegram Premium الذي تريد إظهاره أثناء البحث.",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=cancel_markup("dev_search_messages"))
+        return True
+    if data == "dev_searchmsg_fail_sticker":
+        bot.answer_callback_query(call.id)
+        pending_input_set(call.from_user.id, "searchmsg_fail_sticker")
+        bot.edit_message_text("✨ أرسل ملصق Telegram Premium الذي تريد إظهاره عند فشل البحث.",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=cancel_markup("dev_search_messages"))
+        return True
+    if data in {"dev_searchmsg_clear_wait_sticker", "dev_searchmsg_clear_fail_sticker"}:
+        key = "SEARCH_WAIT_STICKER_ID" if data.endswith("wait_sticker") else "SEARCH_FAIL_STICKER_ID"
+        setting_set(key, "")
+        bot.answer_callback_query(call.id, "🗑️ تمت إزالة الملصق.")
+        show_search_messages(bot, call)
+        return True
+    if data == "dev_searchmsg_preview":
+        bot.answer_callback_query(call.id)
+        wait_text = setting_get("SEARCH_WAIT_TEXT") or "🔎 جاري البحث والتنزيل..."
+        fail_text = setting_get("SEARCH_FAIL_TEXT") or "❌ فشل البحث أو تنزيل الأغنية. حاول مرة ثانية."
+        bot.send_message(call.message.chat.id, wait_text)
+        wait_sticker = (setting_get("SEARCH_WAIT_STICKER_ID") or "").strip()
+        if wait_sticker:
+            bot.send_sticker(call.message.chat.id, wait_sticker)
+        bot.send_message(call.message.chat.id, fail_text)
+        fail_sticker = (setting_get("SEARCH_FAIL_STICKER_ID") or "").strip()
+        if fail_sticker:
+            bot.send_sticker(call.message.chat.id, fail_sticker)
+        return True
     if data == "dev_playback_settings":
         bot.answer_callback_query(call.id)
         show_playback_settings(bot, call)
@@ -1303,6 +1387,31 @@ def handle_input(bot, message):
         return False
 
     state = pending_input_get(message.from_user.id)
+    if state in {"searchmsg_wait_text", "searchmsg_fail_text"}:
+        value = (message.text or "").strip()
+        if not value:
+            bot.reply_to(message, "❌ أرسل نصاً، أو OFF لإرجاع الافتراضي.")
+            return True
+        if len(value) > 1000:
+            bot.reply_to(message, "❌ الحد الأقصى للنص 1000 حرف.")
+            return True
+        key = "SEARCH_WAIT_TEXT" if state == "searchmsg_wait_text" else "SEARCH_FAIL_TEXT"
+        setting_set(key, "" if value.upper() == "OFF" else value)
+        pending_input_set(message.from_user.id, None)
+        bot.reply_to(message, "✅ تم حفظ الرسالة." if value.upper() != "OFF" else "✅ تمت إعادة الرسالة إلى النص الافتراضي.")
+        return True
+
+    if state in {"searchmsg_wait_sticker", "searchmsg_fail_sticker"}:
+        sticker = getattr(message, "sticker", None)
+        if not sticker:
+            bot.reply_to(message, "❌ أرسل ملصقاً فقط. يمكن استخدام ملصقات Premium.")
+            return True
+        key = "SEARCH_WAIT_STICKER_ID" if state == "searchmsg_wait_sticker" else "SEARCH_FAIL_STICKER_ID"
+        setting_set(key, sticker.file_id)
+        pending_input_set(message.from_user.id, None)
+        bot.reply_to(message, "✅ تم حفظ الملصق.")
+        return True
+
     if state in {"waiting_assistant_phone", "waiting_assistant_code", "waiting_assistant_password"} and message.chat.type != "private":
         bot.reply_to(message, "⛔ أكواد تسجيل الدخول وكلمة المرور مسموح بها في الخاص فقط.")
         return True
