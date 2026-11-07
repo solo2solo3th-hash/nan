@@ -914,7 +914,8 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
                     bot, message.chat.id,
                     f"❌ تعذر تشغيل الأغنية بواسطة المساعد رقم {slot}.\n"
                     f"السبب: {exc}\n"
-                    "تأكد أن المساعد موجود بالمجموعة، وأن البوت مشرف ويملك صلاحية إنشاء رابط دعوة إذا كانت المجموعة خاصة."
+                    "تأكد أن المساعد موجود بالمجموعة، وأن البوت مشرف ويملك صلاحية إنشاء رابط دعوة إذا كانت المجموعة خاصة.",
+                    message.message_id
                 )
         except Exception as exc:
             log.exception("play/search failed")
@@ -926,7 +927,8 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             _send_search_failure(
                 bot, message.chat.id,
                 "❌ فشل البحث أو تجهيز الأغنية قبل تشغيلها.\n"
-                f"التفاصيل: {type(exc).__name__}: {exc}"
+                f"التفاصيل: {type(exc).__name__}: {exc}",
+                message.message_id
             )
         finally:
             _delete_search_status(bot, message.chat.id, status)
