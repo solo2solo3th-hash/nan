@@ -1,6 +1,8 @@
 """All Bot API handlers; keeps main.py as a tiny bootstrap file."""
 from __future__ import annotations
+import json
 import logging
+import random
 import traceback
 import uuid
 from html import escape
@@ -54,35 +56,39 @@ _BOT_LOGO_FILE_ID = None
 
 
 def _send_search_status(bot, chat_id, reply_to_message_id=None, default_text="🔎 جاري البحث والتنزيل..."):
-    text = (setting_get("SEARCH_WAIT_TEXT") or default_text).strip() or default_text
-    emoji_id = (setting_get("SEARCH_WAIT_CUSTOM_EMOJI_ID") or "").strip()
-    emoji_char = setting_get("SEARCH_WAIT_CUSTOM_EMOJI_CHAR") or "✨"
-    entities = None
-    if emoji_id:
-        offset = len(text.encode("utf-16-le")) // 2
-        length = len(emoji_char.encode("utf-16-le")) // 2
-        entities = [types.MessageEntity(type="custom_emoji", offset=offset, length=length, custom_emoji_id=emoji_id)]
+    phrase = None
     try:
-        status = bot.send_message(
-            chat_id, text + (emoji_char if emoji_id else ""),
-            reply_to_message_id=reply_to_message_id, entities=entities
-        )
+        phrases = json.loads(setting_get("SEARCH_WAIT_PHRASES") or "[]")
+        if isinstance(phrases, list) and phrases:
+            phrase = random.choice(phrases)
     except Exception:
-        if not emoji_id:
-            raise
-        log.exception("Premium custom emoji send failed; falling back to regular emoji")
-        status = bot.send_message(
-            chat_id, text + emoji_char,
-            reply_to_message_id=reply_to_message_id
-        )
-    sticker_message = None
-    sticker_id = (setting_get("SEARCH_WAIT_STICKER_ID") or "").strip()
-    if sticker_id:
+        log.exception("Could not read configured search-wait phrases")
+    if phrase:
+        text = phrase.get("text") or default_text
+        entities = [
+            types.MessageEntity(
+                type="custom_emoji",
+                offset=item["offset"],
+                length=item["length"],
+                custom_emoji_id=item["custom_emoji_id"]
+            )
+            for item in phrase.get("entities", [])
+        ]
         try:
-            sticker_message = bot.send_sticker(chat_id, sticker_id)
+            return bot.send_message(
+                chat_id, text, reply_to_message_id=reply_to_message_id,
+                entities=entities or None
+            )
         except Exception:
-            log.exception("Could not send configured search-wait sticker")
-    return status, sticker_message
+            if not entities:
+                raise
+            log.exception("Premium custom emoji in wait phrase failed; sending plain text")
+            return bot.send_message(
+                chat_id, text, reply_to_message_id=reply_to_message_id
+            )
+    text = (setting_get("SEARCH_WAIT_TEXT") or default_text).strip() or default_text
+    return bot.send_message(chat_id, text, reply_to_message_id=reply_to_message_id)
+
 
 
 def _delete_search_status(bot, chat_id, status):
@@ -99,33 +105,8 @@ def _delete_search_status(bot, chat_id, status):
 
 def _send_search_failure(bot, chat_id, default_text, reply_to_message_id=None):
     text = (setting_get("SEARCH_FAIL_TEXT") or default_text).strip() or default_text
-    emoji_id = (setting_get("SEARCH_FAIL_CUSTOM_EMOJI_ID") or "").strip()
-    emoji_char = setting_get("SEARCH_FAIL_CUSTOM_EMOJI_CHAR") or "✨"
-    entities = None
-    if emoji_id:
-        offset = len(text.encode("utf-16-le")) // 2
-        length = len(emoji_char.encode("utf-16-le")) // 2
-        entities = [types.MessageEntity(type="custom_emoji", offset=offset, length=length, custom_emoji_id=emoji_id)]
-    try:
-        sent = bot.send_message(
-            chat_id, text + (emoji_char if emoji_id else ""),
-            reply_to_message_id=reply_to_message_id, entities=entities
-        )
-    except Exception:
-        if not emoji_id:
-            raise
-        log.exception("Premium custom emoji send failed; falling back to regular emoji")
-        sent = bot.send_message(
-            chat_id, text + emoji_char,
-            reply_to_message_id=reply_to_message_id
-        )
-    sticker_id = (setting_get("SEARCH_FAIL_STICKER_ID") or "").strip()
-    if sticker_id:
-        try:
-            bot.send_sticker(chat_id, sticker_id)
-        except Exception:
-            log.exception("Could not send configured search-failure sticker")
-    return sent
+    return bot.send_message(chat_id, text, reply_to_message_id=reply_to_message_id)
+
 
 
 def _chat_link(bot, chat) -> str:
