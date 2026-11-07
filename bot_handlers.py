@@ -62,10 +62,19 @@ def _send_search_status(bot, chat_id, reply_to_message_id=None, default_text="ðŸ
         offset = len(text.encode("utf-16-le")) // 2
         length = len(emoji_char.encode("utf-16-le")) // 2
         entities = [types.MessageEntity(type="custom_emoji", offset=offset, length=length, custom_emoji_id=emoji_id)]
-    status = bot.send_message(
-        chat_id, text + (emoji_char if emoji_id else ""),
-        reply_to_message_id=reply_to_message_id, entities=entities
-    )
+    try:
+        status = bot.send_message(
+            chat_id, text + (emoji_char if emoji_id else ""),
+            reply_to_message_id=reply_to_message_id, entities=entities
+        )
+    except Exception:
+        if not emoji_id:
+            raise
+        log.exception("Premium custom emoji send failed; falling back to regular emoji")
+        status = bot.send_message(
+            chat_id, text + emoji_char,
+            reply_to_message_id=reply_to_message_id
+        )
     sticker_message = None
     sticker_id = (setting_get("SEARCH_WAIT_STICKER_ID") or "").strip()
     if sticker_id:
@@ -97,10 +106,19 @@ def _send_search_failure(bot, chat_id, default_text, reply_to_message_id=None):
         offset = len(text.encode("utf-16-le")) // 2
         length = len(emoji_char.encode("utf-16-le")) // 2
         entities = [types.MessageEntity(type="custom_emoji", offset=offset, length=length, custom_emoji_id=emoji_id)]
-    sent = bot.send_message(
-        chat_id, text + (emoji_char if emoji_id else ""),
-        reply_to_message_id=reply_to_message_id, entities=entities
-    )
+    try:
+        sent = bot.send_message(
+            chat_id, text + (emoji_char if emoji_id else ""),
+            reply_to_message_id=reply_to_message_id, entities=entities
+        )
+    except Exception:
+        if not emoji_id:
+            raise
+        log.exception("Premium custom emoji send failed; falling back to regular emoji")
+        sent = bot.send_message(
+            chat_id, text + emoji_char,
+            reply_to_message_id=reply_to_message_id
+        )
     sticker_id = (setting_get("SEARCH_FAIL_STICKER_ID") or "").strip()
     if sticker_id:
         try:
