@@ -55,9 +55,19 @@ _BOT_LOGO_FILE_ID = None
 
 def _send_search_status(bot, chat_id, reply_to_message_id=None, default_text="🔎 جاري البحث والتنزيل..."):
     text = (setting_get("SEARCH_WAIT_TEXT") or default_text).strip() or default_text
-    status = bot.send_message(chat_id, text, reply_to_message_id=reply_to_message_id)
-    sticker_id = (setting_get("SEARCH_WAIT_STICKER_ID") or "").strip()
+    emoji_id = (setting_get("SEARCH_WAIT_CUSTOM_EMOJI_ID") or "").strip()
+    emoji_char = setting_get("SEARCH_WAIT_CUSTOM_EMOJI_CHAR") or "✨"
+    entities = None
+    if emoji_id:
+        offset = len(text.encode("utf-16-le")) // 2
+        length = len(emoji_char.encode("utf-16-le")) // 2
+        entities = [types.MessageEntity(type="custom_emoji", offset=offset, length=length, custom_emoji_id=emoji_id)]
+    status = bot.send_message(
+        chat_id, text + (emoji_char if emoji_id else ""),
+        reply_to_message_id=reply_to_message_id, entities=entities
+    )
     sticker_message = None
+    sticker_id = (setting_get("SEARCH_WAIT_STICKER_ID") or "").strip()
     if sticker_id:
         try:
             sticker_message = bot.send_sticker(chat_id, sticker_id)
@@ -80,7 +90,17 @@ def _delete_search_status(bot, chat_id, status):
 
 def _send_search_failure(bot, chat_id, default_text, reply_to_message_id=None):
     text = (setting_get("SEARCH_FAIL_TEXT") or default_text).strip() or default_text
-    sent = bot.send_message(chat_id, text, reply_to_message_id=reply_to_message_id)
+    emoji_id = (setting_get("SEARCH_FAIL_CUSTOM_EMOJI_ID") or "").strip()
+    emoji_char = setting_get("SEARCH_FAIL_CUSTOM_EMOJI_CHAR") or "✨"
+    entities = None
+    if emoji_id:
+        offset = len(text.encode("utf-16-le")) // 2
+        length = len(emoji_char.encode("utf-16-le")) // 2
+        entities = [types.MessageEntity(type="custom_emoji", offset=offset, length=length, custom_emoji_id=emoji_id)]
+    sent = bot.send_message(
+        chat_id, text + (emoji_char if emoji_id else ""),
+        reply_to_message_id=reply_to_message_id, entities=entities
+    )
     sticker_id = (setting_get("SEARCH_FAIL_STICKER_ID") or "").strip()
     if sticker_id:
         try:
@@ -88,6 +108,7 @@ def _send_search_failure(bot, chat_id, default_text, reply_to_message_id=None):
         except Exception:
             log.exception("Could not send configured search-failure sticker")
     return sent
+
 
 def _chat_link(bot, chat) -> str:
     """Return a stable public/primary link for a group or channel when Telegram exposes one."""
