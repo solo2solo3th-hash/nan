@@ -776,7 +776,7 @@ def show_chat_commands(bot, call):
 def search_messages_markup():
     m = types.InlineKeyboardMarkup(row_width=1)
     m.add(_panel_button("✏️ عبارات الانتظار (كل عبارة بسطر)", callback_data="dev_searchmsg_wait_text"))
-    m.add(_panel_button("✏️ تعديل رسالة الفشل", callback_data="dev_searchmsg_fail_text"))
+    m.add(_panel_button("✏️ عبارات الفشل (كل عبارة بسطر)", callback_data="dev_searchmsg_fail_text"))
     m.add(_panel_button("👁️ معاينة الرسائل", callback_data="dev_searchmsg_preview"))
     m.add(_panel_button("↩️ رجوع", callback_data="back_to_main"))
     return m
@@ -791,17 +791,19 @@ def show_search_messages(bot, call):
     except Exception:
         phrases = []
     fail_text = setting_get("SEARCH_FAIL_TEXT") or "❌ فشل البحث أو تنزيل الأغنية. حاول مرة ثانية."
+    try:
+        fail_phrases = json.loads(setting_get("SEARCH_FAIL_PHRASES") or "[]")
+        if not isinstance(fail_phrases, list):
+            fail_phrases = []
+    except Exception:
+        fail_phrases = []
     bot.edit_message_text(
         "🎛️ التحكم برسائل البحث والتنزيل\n\n"
         f"🕒 عبارات الانتظار المحفوظة: {len(phrases) if phrases else (1 if wait_text else 0)}\n"
-        f"❌ رسالة الفشل: {'مخصصة' if setting_get('SEARCH_FAIL_TEXT') else 'الافتراضية'}\n\n"
-        "أرسل عدة عبارات انتظار، كل عبارة بسطر مستقل. "
-        "تگدر تدرج إيموجي Premium داخل كل عبارة مباشرة من لوحة الإيموجي، "
-        "والبوت يختار عبارة تلقائياً لكل طلب.\n\n"
-        "مثال:\n"
-        "أرجوك اصبر شوي ✨\n"
-        "جاري تجهيز طلبك 💎\n"
-        "لحظات ونكمل البحث ⏳\n\n"
+        f"❌ عبارات الفشل المحفوظة: {len(fail_phrases) if fail_phrases else (1 if fail_text else 0)}\n\n"
+        "أرسل عدة عبارات انتظار أو فشل، كل عبارة بسطر مستقل. "
+        "تگدر تدرج إيموجي Premium داخل العبارة مباشرة، "
+        "والبوت يختار عبارة تلقائياً عند كل طلب أو فشل.\n\n"
         "النص الحالي للفشل:\n" + fail_text[:500],
         call.message.chat.id, call.message.message_id,
         reply_markup=search_messages_markup()
@@ -1249,7 +1251,7 @@ def _handle_callback_impl(bot, call):
     if data == "dev_searchmsg_fail_text":
         bot.answer_callback_query(call.id)
         pending_input_set(call.from_user.id, "searchmsg_fail_text")
-        bot.edit_message_text("✏️ أرسل نص رسالة الفشل الجديدة. أرسل OFF لإرجاع النص الافتراضي.",
+        bot.edit_message_text("✏️ أرسل عبارات الفشل، كل عبارة بسطر مستقل. تگدر تدرج إيموجي Premium داخل النص مباشرة. أرسل OFF لإرجاع الافتراضي.",
             call.message.chat.id, call.message.message_id,
             reply_markup=cancel_markup("dev_search_messages"))
         return True
@@ -1275,7 +1277,30 @@ def _handle_callback_impl(bot, call):
             bot.send_message(chat_id, text_value, entities=entities or None)
         else:
             bot.send_message(chat_id, setting_get("SEARCH_WAIT_TEXT") or "🔎 جاري البحث والتنزيل...")
-        bot.send_message(chat_id, setting_get("SEARCH_FAIL_TEXT") or "❌ فشل البحث أو تنزيل الأغنية. حاول مرة ثانية.")
+        try:
+            fail_phrases = json.loads(setting_get("SEARCH_FAIL_PHRASES") or "[]")
+            fail_phrase = random.choice(fail_phrases) if fail_phrases else None
+        except Exception:
+            fail_phrase = None
+        if fail_phrase:
+            fail_text = fail_phrase.get("text") or "❌ فشل البحث أو تنزيل الأغنية. حاول مرة ثانية."
+            fail_entities = [
+                types.MessageEntity(
+                    type="custom_emoji",
+                    offset=item["offset"],
+                    length=item["length"],
+                    custom_emoji_id=item["custom_emoji_id"]
+                )
+                for item in fail_phrase.get("entities", [])
+            ]
+            try:
+                bot.send_message(chat_id, fail_text, entities=fail_entities or None)
+            except Exception:
+                if not fail_entities:
+                    raise
+                bot.send_message(chat_id, fail_text)
+        else:
+            bot.send_message(chat_id, setting_get("SEARCH_FAIL_TEXT") or "❌ فشل البحث أو تنزيل الأغنية. حاول مرة ثانية.")
         return True
 
     if data == "dev_playback_settings":
@@ -1440,10 +1465,46 @@ def handle_input(bot, message):
             pending_input_set(message.from_user.id, None)
             bot.reply_to(message, f"✅ تم حفظ {len(phrases)} عبارة انتظار. سيختار البوت عبارة تلقائياً لكل طلب، مع الحفاظ على إيموجي Premium داخل النص.")
             return True
-        key = "SEARCH_FAIL_TEXT"
-        setting_set(key, "" if value.upper() == "OFF" else value)
+        if value.upper() == "OFF":
+            setting_set("SEARCH_FAIL_PHRASES", "[]")
+            setting_set("SEARCH_FAIL_TEXT", "")
+            pending_input_set(message.from_user.id, None)
+            bot.reply_to(message, "✅ تمت إعادة رسائل الفشل إلى الافتراضية.")
+            return True
+        entities = getattr(message, "entities", None) or []
+        custom_entities = [
+            entity for entity in entities
+            if getattr(entity, "type", None) == "custom_emoji"
+            and getattr(entity, "custom_emoji_id", None)
+        ]
+        fail_phrases = []
+        global_offset = 0
+        for raw_line in value.split("\\n"):
+            line = raw_line.strip()
+            leading = len(raw_line) - len(raw_line.lstrip())
+            leading_units = len(raw_line[:leading].encode("utf-16-le")) // 2
+            line_units = len(raw_line.encode("utf-16-le")) // 2
+            line_entities = []
+            for entity in custom_entities:
+                local_start = entity.offset - global_offset - leading_units
+                if 0 <= local_start and local_start + entity.length <= len(line.encode("utf-16-le")) // 2:
+                    line_entities.append({
+                        "offset": local_start,
+                        "length": entity.length,
+                        "custom_emoji_id": str(entity.custom_emoji_id),
+                    })
+            if line:
+                fail_phrases.append({"text": line, "entities": line_entities})
+            global_offset += line_units + 1
+        if not fail_phrases:
+            bot.reply_to(message, "❌ أرسل عبارة فشل واحدة على الأقل، كل عبارة بسطر.")
+            return True
+        setting_set("SEARCH_FAIL_PHRASES", json.dumps(fail_phrases, ensure_ascii=False))
+        setting_set("SEARCH_FAIL_TEXT", "")
+        for old_key in ("SEARCH_FAIL_CUSTOM_EMOJI_ID", "SEARCH_FAIL_CUSTOM_EMOJI_CHAR", "SEARCH_FAIL_STICKER_ID"):
+            setting_set(old_key, "")
         pending_input_set(message.from_user.id, None)
-        bot.reply_to(message, "✅ تم حفظ الرسالة." if value.upper() != "OFF" else "✅ تمت إعادة الرسالة إلى النص الافتراضي.")
+        bot.reply_to(message, f"✅ تم حفظ {len(fail_phrases)} عبارة فشل. سيختار البوت عبارة تلقائياً عند الفشل، مع الحفاظ على إيموجي Premium داخل النص.")
         return True
 
     if state in {"waiting_assistant_phone", "waiting_assistant_code", "waiting_assistant_password"} and message.chat.type != "private":
