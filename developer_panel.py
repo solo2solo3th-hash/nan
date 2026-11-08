@@ -60,6 +60,12 @@ PERMISSION_LABELS = {
     "playback": "🎵 التحكم بالتشغيل",
 }
 
+# Keep the legacy permission screen compatible with the granular permission
+# keys stored by database.py (for example, "playback.play").
+for _group, _items in PERMISSION_GROUPS.items():
+    for _key, _label in _items.items():
+        PERMISSION_LABELS[f"{_group}.{_key}"] = f"{_group} · {_label}"
+
 def _panel_button(text, *args, emoji_key=None, **kwargs):
     """Build a developer-panel button and optionally attach its Premium Custom Emoji."""
     key = emoji_key or str(kwargs.get("callback_data") or text).split(":", 1)[0].upper().replace("-", "_")
@@ -481,15 +487,16 @@ def toggle_permission(bot, call, uid, key):
     if uid == int(DEVELOPER_ID):
         bot.answer_callback_query(call.id, "المطور لديه تحكم كامل.", show_alert=True)
         return
-    if key not in PERMISSION_LABELS:
+    if key not in PERMISSIONS:
         bot.answer_callback_query(call.id, "صلاحية غير معروفة.", show_alert=True)
         return
 
     current = bool(get_permission_state(uid, int(DEVELOPER_ID)).get(key))
     set_permission(uid, key, not current)
+    label = PERMISSIONS[key]
     bot.answer_callback_query(
         call.id,
-        f"{PERMISSION_LABELS[key]}: " + ("تفعّلت 🟢" if not current else "تعطلت 🔴")
+        f"{label}: " + ("تفعّلت 🟢" if not current else "تعطلت 🔴")
     )
     show_permissions(bot, call, uid)
 
