@@ -63,7 +63,7 @@ def sudo_markup(user_id: int):
         keyboard.add(_admin_button("📣 الإذاعة", callback_data="adm_broadcast"))
     if state.get("admins.view"):
         keyboard.add(_admin_button("👨‍💻 قائمة المشرفين", callback_data="adm_list"))
-    keyboard.add(_admin_button("❌ إغلاق", callback_data="close_menu"))
+    keyboard.add(_admin_button("❌ إغلاق", callback_data="adm_close"))
     return keyboard
 
 
