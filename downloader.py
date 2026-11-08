@@ -524,9 +524,9 @@ def _search_candidates(query: str):
     # replace the original request during automatic selection.
     for source in _SEARCHABLE_SOURCE_ORDER:
         if source == "youtube":
-            yield source, f"ytsearch5:{query}"
+            yield source, f"ytsearch10:{query}"
         elif source == "soundcloud":
-            yield source, f"scsearch5:{query}"
+            yield source, f"scsearch10:{query}"
 
     # Search other configured downloadable source domains with the original query.
     for source in _SEARCHABLE_SOURCE_ORDER:
@@ -536,7 +536,11 @@ def _search_candidates(query: str):
             yield source, candidate
 
 
-def _parallel_search_candidates(query: str, job: Path):
+def _parallel_search_candidates(
+    query: str,
+    job: Path,
+    diagnostics: list[str] | None = None,
+):
     """Search native providers and fallback domains concurrently.
 
     Native provider searches are relevance-ranked before they are yielded.
@@ -573,7 +577,7 @@ def _parallel_search_candidates(query: str, job: Path):
                 raise RuntimeError("Audius search returned no relevant downloadable track URLs")
             return [(source, url, False) for _score, url, _entry in ranked]
 
-        target = f"ytsearch5:{query}" if source == "youtube" else f"scsearch5:{query}"
+        target = f"ytsearch10:{query}" if source == "youtube" else f"scsearch10:{query}"
         options = _source_options(job, source)
         if source == "youtube":
             cookie_path = _write_youtube_cookies(job)
@@ -607,8 +611,13 @@ def _parallel_search_candidates(query: str, job: Path):
             try:
                 candidates = future.result()
             except Exception as exc:
-                search_errors.append(f"{source}: {type(exc).__name__}: {exc}")
+                detail = f"{source} search: {type(exc).__name__}: {exc}"
+                search_errors.append(detail)
+                if diagnostics is not None:
+                    diagnostics.append(detail)
                 continue
+            if not candidates and diagnostics is not None:
+                diagnostics.append(f"{source} search: no matching candidates returned")
             for candidate in candidates:
                 yielded_any = True
                 yield candidate
@@ -621,7 +630,7 @@ def _parallel_search_candidates(query: str, job: Path):
                 if source in sources:
                     yield (
                         source,
-                        f"ytsearch5:{query}" if source == "youtube" else f"scsearch5:{query}",
+                        f"ytsearch10:{query}" if source == "youtube" else f"scsearch10:{query}",
                         False,
                     )
 
@@ -1040,11 +1049,12 @@ def download_audio(query: str):
             ) from exc
 
     errors = []
+    search_diagnostics = []
     youtube_auth_blocked = False
 
     try:
         # First preserve the normal title/artist search across every provider.
-        for source, target, validate_search in _parallel_search_candidates(query, job):
+        for source, target, validate_search in _parallel_search_candidates(query, job, search_diagnostics):
             if source not in _ACTIVE_SOURCE_ORDER:
                 continue
             if source == "youtube" and youtube_auth_blocked:
@@ -1078,7 +1088,7 @@ def download_audio(query: str):
 
         for catalog_query in catalog_queries:
             _clear_job_files(job)
-            for source, target, validate_search in _parallel_search_candidates(catalog_query, job):
+            for source, target, validate_search in _parallel_search_candidates(catalog_query, job, search_diagnostics):
                 if source not in _ACTIVE_SOURCE_ORDER:
                     continue
                 if source == "youtube" and youtube_auth_blocked:
@@ -1112,7 +1122,7 @@ def download_audio(query: str):
 
         for track_query in lyric_tracks:
             _clear_job_files(job)
-            for source, target, validate_search in _parallel_search_candidates(track_query, job):
+            for source, target, validate_search in _parallel_search_candidates(track_query, job, search_diagnostics):
                 if source not in _ACTIVE_SOURCE_ORDER:
                     continue
                 if source == "youtube" and youtube_auth_blocked:
@@ -1137,8 +1147,9 @@ def download_audio(query: str):
                         youtube_auth_blocked = True
                     _clear_job_files(job)
 
+        errors.extend(search_diagnostics[-25:])
         raise RuntimeError(
-            "No searchable source succeeded after normal and lyrics-based search. "
+            "No searchable source succeeded after normal, catalogue, and lyrics-based search. "
             + " | ".join(errors[-25:])
             if errors
             else (
