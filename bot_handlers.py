@@ -15,7 +15,7 @@ from telebot import types, apihelper
 # Increase the request read/write timeout without changing other bot behavior.
 apihelper.READ_TIMEOUT = max(getattr(apihelper, "READ_TIMEOUT", 30), 300)
 
-from admin_panel import playback_markup, subscriptions_markup, users_markup
+from admin_panel import playback_markup, subscriptions_markup, users_markup, sudo_markup
 from calls import VoiceCallRunner
 from config import CONTROL_ADMINS_ONLY, DEVELOPER_ID, MAX_QUEUE_SIZE, MAX_DOWNLOAD_MB, DOWNLOAD_DIR
 from database import (
@@ -295,6 +295,14 @@ def admin_can(user_id: int, permission: str | None = None) -> bool:
     if user_id == DEVELOPER_ID or permission is None:
         return True
     return has_permission(user_id, permission, DEVELOPER_ID)
+
+
+def admin_has_any(user_id: int, group: str) -> bool:
+    """Return whether an admin has at least one granular permission in a group."""
+    if not is_admin(user_id, DEVELOPER_ID):
+        return False
+    state = get_permission_state(user_id, DEVELOPER_ID)
+    return any(key.startswith(group + ".") and enabled for key, enabled in state.items())
 
 
 def require_group(bot, message) -> bool:
@@ -605,6 +613,17 @@ def _handle_pending(bot, message) -> bool:
         clear_pending(message.from_user.id)
         return True
     mode = pending[0]
+    required_pending_permission = {
+        "user_ban": "users.ban",
+        "user_unban": "users.unban",
+        "sub_add": "subscriptions.add",
+        "sub_remove": "subscriptions.remove",
+        "broadcast": "broadcast.send",
+    }.get(mode)
+    if required_pending_permission and not admin_can(message.from_user.id, required_pending_permission):
+        clear_pending(message.from_user.id)
+        bot.reply_to(message, "🚫 لم تعد تملك صلاحية تنفيذ هذه العملية.")
+        return True
     text = (message.text or "").strip()
 
     # Developer-panel broadcast modes are waiting_broadcast_all/users/channels.
@@ -818,12 +837,17 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             # gets reported instead of making /admin appear to do nothing.
             text = admin_text()
             markup = developer_markup()
-            bot.send_message(
-                message.chat.id,
-                text,
-                reply_markup=markup,
-                parse_mode="HTML",
-            )
+            if int(user_id) == int(DEVELOPER_ID):
+                bot.send_message(
+                    message.chat.id, text, reply_markup=markup, parse_mode="HTML"
+                )
+            else:
+                bot.send_message(
+                    message.chat.id,
+                    "🛡️ <b>لوحة المشرف</b>\nاختر إجراءً من الصلاحيات الممنوحة لك:",
+                    reply_markup=sudo_markup(int(user_id)),
+                    parse_mode="HTML",
+                )
         except Exception as exc:
             log.exception(
                 "Admin panel failed: user_id=%s chat_id=%s",
@@ -1454,7 +1478,15 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             return
         if data == "adm_home":
             if not admin_can(call.from_user.id): alert(bot, call, "🚫 لا تملك الصلاحية.", True); return
-            bot.edit_message_text(admin_text(), call.message.chat.id, call.message.message_id, reply_markup=developer_markup()); return
+            if int(call.from_user.id) == int(DEVELOPER_ID):
+                bot.edit_message_text(admin_text(), call.message.chat.id, call.message.message_id, reply_markup=developer_markup())
+            else:
+                bot.edit_message_text(
+                    "🛡️ <b>لوحة المشرف</b>\nاختر إجراءً من الصلاحيات الممنوحة لك:",
+                    call.message.chat.id, call.message.message_id,
+                    reply_markup=sudo_markup(call.from_user.id), parse_mode="HTML"
+                )
+            return
         if data == "adm_admins":
             if not admin_can(call.from_user.id, "admins"): alert(bot, call, "🚫 لا تملك الصلاحية.", True); return
             bot.edit_message_text("👨‍💻 إدارة المشرفين", call.message.chat.id, call.message.message_id, reply_markup=admins_menu()); return
@@ -1472,7 +1504,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             state=get_permission_state(uid, DEVELOPER_ID); set_permission(uid, permission, not state.get(permission, False))
             bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=permission_markup(uid)); alert(bot, call, "✅ تم تحديث الصلاحية."); return
         if data == "adm_list":
-            if not admin_can(call.from_user.id,"admins"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
+            if not admin_can(call.from_user.id,"admins.view"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
             rows=list_sudos(); text="👥 المشرفون:\n\n"+ ("\n".join(f"• {uid}" for uid, in rows) if rows else "لا يوجد مشرفون.")
             bot.edit_message_text(text,call.message.chat.id,call.message.message_id,reply_markup=admins_menu()); return
         if data == "adm_noop": alert(bot,call,"ℹ️ لا يوجد مشرفون."); return
@@ -1483,32 +1515,35 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             if not admin_can(call.from_user.id,"settings"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
             bot.edit_message_text("🎛️ تخصيص لوحة التشغيل",call.message.chat.id,call.message.message_id,reply_markup=playback_markup()); return
         if data == "adm_subs":
-            if not admin_can(call.from_user.id,"subscriptions"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
-            bot.edit_message_text("📢 إدارة الاشتراك الإجباري",call.message.chat.id,call.message.message_id,reply_markup=subscriptions_markup()); return
+            if not admin_has_any(call.from_user.id, "subscriptions"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
+            bot.edit_message_text("📢 إدارة الاشتراك الإجباري",call.message.chat.id,call.message.message_id,reply_markup=subscriptions_markup(call.from_user.id)); return
         if data == "adm_broadcast":
-            if not admin_can(call.from_user.id,"broadcast"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
+            if not admin_can(call.from_user.id,"broadcast.send"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
             _set_pending_from_callback(call,"broadcast","📣 أرسل نص الإذاعة الآن:",bot); return
         if data == "adm_stats":
-            if not admin_can(call.from_user.id,"stats"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
+            if not admin_can(call.from_user.id,"stats.view"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
             u,c,a=counts(); alert(bot,call,f"👤 المستخدمون المسجلون: {u}\n💬 المحادثات المسجلة: {c}\n🛡️ المشرفون: {a}",True); return
         if data == "adm_users":
-            if not admin_can(call.from_user.id,"users"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
-            bot.edit_message_text("👥 إدارة المستخدمين",call.message.chat.id,call.message.message_id,reply_markup=users_markup()); return
+            if not admin_has_any(call.from_user.id, "users"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
+            bot.edit_message_text("👥 إدارة المستخدمين",call.message.chat.id,call.message.message_id,reply_markup=users_markup(call.from_user.id)); return
         if data in {"user_ban","user_unban"}:
-            if not admin_can(call.from_user.id,"users"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
+            required = "users.ban" if data == "user_ban" else "users.unban"
+            if not admin_can(call.from_user.id, required): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
             _set_pending_from_callback(call,data,"✍️ أرسل Telegram ID:",bot); return
         if data == "user_banned":
-            if not admin_can(call.from_user.id,"users"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
+            if not admin_can(call.from_user.id,"users.banned"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
             ids=banned_ids(); alert(bot,call,"🚫 المحظورون:\n"+ ("\n".join(map(str,ids)) if ids else "لا يوجد."),True); return
         if data in {"sub_add","sub_remove"}:
-            if not admin_can(call.from_user.id,"subscriptions"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
+            required = "subscriptions.add" if data == "sub_add" else "subscriptions.remove"
+            if not admin_can(call.from_user.id, required): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
             prompt="➕ أرسل: اسم القناة | @channel أو -100... | رابط القناة" if data=="sub_add" else "🗑️ أرسل @channel أو chat ID للحذف:"
             _set_pending_from_callback(call,data,prompt,bot); return
         if data == "sub_list":
+            if not admin_can(call.from_user.id, "subscriptions.view"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
             rows=subscriptions(); text="📋 القنوات:\n\n"+ ("\n".join(f"• {title} — {target}" for _,title,target,_,_ in rows) if rows else "لا توجد قنوات.")
             bot.edit_message_text(text,call.message.chat.id,call.message.message_id,reply_markup=subscriptions_markup()); return
         if data == "sub_toggle":
-            if not admin_can(call.from_user.id,"subscriptions"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
+            if not admin_can(call.from_user.id,"subscriptions.toggle"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
             current=setting_get("SUBS_ENABLED")=="ON"; setting_set("SUBS_ENABLED","OFF" if current else "ON"); alert(bot,call,"🔛 تم تبديل الاشتراك الإجباري."); return
         if data in {"play_source1","play_source1_url","play_source2","play_source2_url","play_set_image"}:
             if not admin_can(call.from_user.id,"settings"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
