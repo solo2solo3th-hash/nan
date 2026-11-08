@@ -967,7 +967,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
 
     @bot.message_handler(commands=["skip", "next"])
     def skip_handler(message):
-        if not require_group(bot, message) or not user_can_play(message): return
+        if not require_group(bot, message) or not user_can_play(message, "skip"): return
         try:
             next_track = player.skip_and_take_next(message.chat.id)
             if next_track:
@@ -981,26 +981,31 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
 
     @bot.message_handler(commands=["pause"])
     def pause_handler(message):
-        if not require_group(bot, message) or not user_can_play(message) or player.current(message.chat.id) is None: return
+        if not require_group(bot, message) or not user_can_play(message, "pause") or player.current(message.chat.id) is None: return
         try: calls.pause(message.chat.id); bot.reply_to(message, "⏸️ تم الإيقاف المؤقت.")
         except Exception: log.exception("pause failed"); bot.reply_to(message, "❌ تعذر الإيقاف المؤقت.")
 
     @bot.message_handler(commands=["resume", "continue"])
     def resume_handler(message):
-        if not require_group(bot, message) or not user_can_play(message) or player.current(message.chat.id) is None: return
+        if not require_group(bot, message) or not user_can_play(message, "resume") or player.current(message.chat.id) is None: return
         try: calls.resume(message.chat.id); bot.reply_to(message, "▶️ تم الاستئناف.")
         except Exception: log.exception("resume failed"); bot.reply_to(message, "❌ تعذر الاستئناف.")
 
     @bot.message_handler(commands=["stop", "leave"])
     def stop_handler(message):
-        if not require_group(bot, message) or not user_can_play(message): return
+        if not require_group(bot, message) or not user_can_play(message, "stop"): return
         try: calls.leave(message.chat.id)
         except Exception: pass
         player.stop(message.chat.id); bot.reply_to(message, "⏹️ تم إيقاف التشغيل.")
 
     @bot.message_handler(commands=["queue"])
     def queue_handler(message):
-        if require_group(bot, message): _send_queue(bot, player, message.chat.id)
+        if not require_group(bot, message):
+            return
+        if not user_can_play(message, "queue"):
+            bot.reply_to(message, "🚫 ليست لديك صلاحية عرض قائمة التشغيل.")
+            return
+        _send_queue(bot, player, message.chat.id)
 
 
     def _play_replied_audio(message) -> bool:
@@ -1521,7 +1526,12 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
         if data == "adm_list":
             if not admin_can(call.from_user.id,"admins.view"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
             rows=list_sudos(); text="👥 المشرفون:\n\n"+ ("\n".join(f"• {uid}" for uid, in rows) if rows else "لا يوجد مشرفون.")
-            bot.edit_message_text(text,call.message.chat.id,call.message.message_id,reply_markup=admins_menu()); return
+            bot.edit_message_text(
+                text, call.message.chat.id, call.message.message_id,
+                reply_markup=types.InlineKeyboardMarkup([[
+                    _bot_button("↩️ الرئيسية", callback_data="adm_home")
+                ]])
+            ); return
         if data == "adm_noop": alert(bot,call,"ℹ️ لا يوجد مشرفون."); return
         if data in {"adm_add","adm_remove"}:
             if call.from_user.id != DEVELOPER_ID: alert(bot,call,"🚫 المطور فقط.",True); return
@@ -1556,7 +1566,7 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
         if data == "sub_list":
             if not admin_can(call.from_user.id, "subscriptions.view"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
             rows=subscriptions(); text="📋 القنوات:\n\n"+ ("\n".join(f"• {title} — {target}" for _,title,target,_,_ in rows) if rows else "لا توجد قنوات.")
-            bot.edit_message_text(text,call.message.chat.id,call.message.message_id,reply_markup=subscriptions_markup()); return
+            bot.edit_message_text(text,call.message.chat.id,call.message.message_id,reply_markup=subscriptions_markup(call.from_user.id)); return
         if data == "sub_toggle":
             if not admin_can(call.from_user.id,"subscriptions.toggle"): alert(bot,call,"🚫 لا تملك الصلاحية.",True); return
             current=setting_get("SUBS_ENABLED")=="ON"; setting_set("SUBS_ENABLED","OFF" if current else "ON"); alert(bot,call,"🔛 تم تبديل الاشتراك الإجباري."); return
