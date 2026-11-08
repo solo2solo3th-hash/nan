@@ -18,7 +18,12 @@ from config import (
     MAX_QUEUE_SIZE,
     TOKEN,
 )
-from database import init_db, auto_message_claim_due
+from database import (
+    init_db,
+    auto_message_claim_due,
+    auto_message_mark_success,
+    auto_message_retry,
+)
 from bot_handlers import register_handlers
 from music_player import MusicPlayer
 
@@ -58,8 +63,13 @@ def _automatic_message_worker() -> None:
                 item_id, target, message_text = int(row[0]), row[1], row[2]
                 try:
                     bot.send_message(_auto_target(target), message_text)
+                    auto_message_mark_success(item_id)
                 except Exception:
                     log.exception("Automatic message #%s failed for target %s", item_id, target)
+                    try:
+                        auto_message_retry(item_id)
+                    except Exception:
+                        log.exception("Could not schedule retry for automatic message #%s", item_id)
         except Exception:
             log.exception("Automatic message scheduler failed")
         time.sleep(5)
