@@ -61,7 +61,7 @@ def sudo_markup(user_id: int):
         keyboard.add(_admin_button("🔒 الاشتراك الإجباري", callback_data="adm_subs"))
     if state.get("broadcast.send"):
         keyboard.add(_admin_button("📣 الإذاعة", callback_data="adm_broadcast"))
-    if any(state.get(f"user_panel.{key}", False) for key in PERMISSION_GROUPS["user_panel"]):
+    if state.get("user_panel.view"):
         keyboard.add(_admin_button("👤 لوحة العضو", callback_data="adm_user_panel"))
     if state.get("admins.view"):
         keyboard.add(_admin_button("👨‍💻 قائمة المشرفين", callback_data="adm_list"))
