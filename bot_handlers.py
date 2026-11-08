@@ -627,6 +627,10 @@ def _handle_pending(bot, message) -> bool:
         "sub_add": "subscriptions.add",
         "sub_remove": "subscriptions.remove",
         "broadcast": "broadcast.send",
+        "edit_start_text": "user_panel.start_text",
+        "edit_start_image": "user_panel.start_image",
+        "edit_btn1_input": "user_panel.button1",
+        "edit_btn2_input": "user_panel.button2",
     }.get(mode)
     if required_pending_permission and not admin_can(message.from_user.id, required_pending_permission):
         clear_pending(message.from_user.id)
