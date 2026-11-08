@@ -71,8 +71,12 @@ SOURCE_HOSTS = {
 # Keep the project's configured priority, then append additional extractors so
 # an older config.py containing only ten sources still gains the expanded pool.
 _EXTRA_SOURCE_ORDER = (
+    # Audio-first providers must remain available even when an older config.py
+    # only lists YouTube and SoundCloud.
+    "audius", "jamendo", "bandcamp", "audiomack", "mixcloud",
+    "internet_archive", "hearthisat",
     "tiktok", "facebook", "instagram", "reddit", "twitch", "twitter",
-    "bilibili", "vk", "hearthisat", "niconico", "odysee",
+    "bilibili", "vk", "niconico", "odysee",
 )
 _ACTIVE_SOURCE_ORDER = tuple(dict.fromkeys(
     [name for name in AUDIO_SOURCE_ORDER if name in SOURCE_HOSTS]
