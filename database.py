@@ -162,6 +162,15 @@ def init_db() -> None:
             );
             """
         )
+        # Safe additive migration: preserve existing automatic-message rows and settings.
+        auto_columns = {
+            row[1] for row in con.execute("PRAGMA table_info(auto_messages)").fetchall()
+        }
+        if "failure_count" not in auto_columns:
+            con.execute(
+                "ALTER TABLE auto_messages ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0"
+            )
+
         defaults = {
             "SOURCE1_NAME": "المصدر الأول",
             "SOURCE1_URL": "",
@@ -270,6 +279,33 @@ def auto_message_claim_due(now: int, limit: int = 20):
             next_run = int(now) + max(1, int(row[3]))
             con.execute("UPDATE auto_messages SET next_run_at=? WHERE id=?", (next_run, int(row[0])))
         return rows
+
+def auto_message_mark_success(item_id: int) -> None:
+    """Clear the retry backoff after a successful automatic-message delivery."""
+    with db() as con:
+        con.execute(
+            "UPDATE auto_messages SET failure_count=0 WHERE id=?",
+            (int(item_id),),
+        )
+
+
+def auto_message_retry(item_id: int, now: int | None = None) -> None:
+    """Schedule a failed delivery for retry with bounded exponential backoff."""
+    current_time = int(time.time()) if now is None else int(now)
+    with db() as con:
+        row = con.execute(
+            "SELECT failure_count FROM auto_messages WHERE id=? AND enabled=1",
+            (int(item_id),),
+        ).fetchone()
+        if row is None:
+            return
+        failures = max(0, int(row[0]))
+        delay = min(60 * (2 ** min(failures, 6)), 3600)
+        con.execute(
+            "UPDATE auto_messages SET failure_count=failure_count+1, next_run_at=? "
+            "WHERE id=? AND enabled=1",
+            (current_time + delay, int(item_id)),
+        )
 
 def setting_get(key: str) -> Optional[str]:
     with db() as con:
