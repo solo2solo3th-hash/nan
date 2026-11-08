@@ -8,6 +8,8 @@ import re
 import shutil
 import stat
 import subprocess
+import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from html import unescape
@@ -28,6 +30,17 @@ from config import (
 )
 
 _NETSCAPE_COOKIE_HEADERS = ("# HTTP Cookie File", "# Netscape HTTP Cookie File")
+
+# yt-dlp plugin providers use process-global registries. Protect concurrent
+# YoutubeDL construction across simultaneous Telegram requests.
+_YTDLP_INIT_LOCK = threading.Lock()
+
+
+def _new_ytdlp(options: dict):
+    import yt_dlp
+
+    with _YTDLP_INIT_LOCK:
+        return yt_dlp.YoutubeDL(options)
 
 # yt-dlp extractor-backed sources. Availability varies by site and region;
 # this list is a fallback pool, not a guarantee that every site is reachable.
@@ -199,13 +212,45 @@ def _write_youtube_cookies(job: Path) -> str | None:
     return str(cookie_path)
 
 
+def _youtube_cookie_diagnostics() -> str:
+    """Return cookie health metadata only; never expose cookie values."""
+    try:
+        raw = _decode_cookie_secret()
+    except Exception as exc:
+        return f"invalid export ({type(exc).__name__})"
+    if not raw:
+        return "not configured"
+
+    now = int(time.time())
+    count = expired = 0
+    auth_cookie_found = False
+    auth_names = {
+        "LOGIN_INFO", "SID", "__Secure-1PSID", "__Secure-3PSID",
+        "__Secure-1PSIDTS", "__Secure-3PSIDTS",
+    }
+    for line in raw.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split("\\t")
+        if len(fields) != 7:
+            continue
+        count += 1
+        expiry, name = fields[4], fields[5]
+        if expiry.isdigit() and int(expiry) not in {0} and int(expiry) <= now:
+            expired += 1
+        if name in auth_names:
+            auth_cookie_found = True
+    return (
+        f"{count} entries; expired={expired}; "
+        f"Google auth cookie present={'yes' if auth_cookie_found else 'no'}"
+    )
+
+
 def _youtube_extractor_args() -> dict[str, str]:
-    # The plugin is installed from requirements.txt. Point its Node script
-    # provider at the copy built into the Docker image so PO tokens are
-    # generated on demand; keep alternate clients as independent fallbacks.
+    # Use yt-dlp's documented argument names for both the player and bgutil.
     return {
-        "youtube": "player-client=mweb,tv,web_safari",
-        "youtube-bgutilscript": (
+        "youtube": "player_client=mweb,tv,web_safari",
+        "youtubepot-bgutilscript": (
             "server_home=/root/bgutil-ytdlp-pot-provider/server"
         ),
     }
@@ -503,12 +548,12 @@ def _parallel_search_candidates(query: str, job: Path):
     """
     def search_native(source: str):
         if source == "audius":
-            # Audius exposes a public track-search API. Search it directly
-            # instead of scraping search-engine result pages for audius.co URLs.
+            # Use Audius' public catalogue API and keep multiple matches so a
+            # removed or inaccessible item does not end the fallback early.
             endpoint = (
                 "https://api.audius.co/v1/tracks/search?query="
                 + quote_plus(query)
-                + "&limit=10&app_name=NANMusicBot"
+                + "&limit=15&app_name=NANMusicBot"
             )
             request = Request(
                 endpoint,
@@ -524,17 +569,11 @@ def _parallel_search_candidates(query: str, job: Path):
                 title = str(track.get("title") or "").strip()
                 artist = str((track.get("user") or {}).get("name") or "").strip()
                 if permalink and title:
-                    entries.append({
-                        "title": title,
-                        "artist": artist,
-                        "webpage_url": permalink,
-                    })
-            selected_url, _entry = _select_search_result(
-                {"entries": entries}, query, source
-            )
-            return [(source, selected_url, False)]
-
-        import yt_dlp
+                    entries.append({"title": title, "artist": artist, "webpage_url": permalink})
+            ranked = _rank_search_results({"entries": entries}, query, source, limit=5)
+            if not ranked:
+                raise RuntimeError("Audius search returned no relevant downloadable track URLs")
+            return [(source, url, False) for _score, url, _entry in ranked]
 
         target = f"ytsearch5:{query}" if source == "youtube" else f"scsearch5:{query}"
         options = _source_options(job, source)
@@ -542,10 +581,12 @@ def _parallel_search_candidates(query: str, job: Path):
             cookie_path = _write_youtube_cookies(job)
             if cookie_path:
                 options["cookiefile"] = cookie_path
-        with yt_dlp.YoutubeDL(options) as ydl:
+        with _new_ytdlp(options) as ydl:
             info = ydl.extract_info(target, download=False)
-        selected_url, _entry = _select_search_result(info or {}, query, source)
-        return [(source, selected_url, False)]
+        ranked = _rank_search_results(info or {}, query, source, limit=5)
+        if not ranked:
+            raise RuntimeError(f"{source} search returned no relevant downloadable track URLs")
+        return [(source, url, False) for _score, url, _entry in ranked]
 
     def search_web(source: str):
         return [
@@ -560,7 +601,7 @@ def _parallel_search_candidates(query: str, job: Path):
     yielded_any = False
     try:
         for source in sources:
-            worker = search_native if source in {"youtube", "soundcloud"} else search_web
+            worker = search_native if source in {"youtube", "soundcloud", "audius"} else search_web
             futures[executor.submit(worker, source)] = source
 
         for future in as_completed(futures):
@@ -641,16 +682,18 @@ def _music_match_score(query: str, candidate: str) -> float:
     return (0.78 * token_score) + (0.22 * phrase_score)
 
 
-def _select_search_result(info: dict, query: str, source: str) -> tuple[str, dict]:
-    """Choose the closest matching search entry; reject weak or unrelated results."""
+def _rank_search_results(
+    info: dict,
+    query: str,
+    source: str,
+    limit: int = 5,
+) -> list[tuple[float, str, dict]]:
+    """Return several relevant, downloadable candidates in descending match order."""
     entries = info.get("entries") if isinstance(info, dict) else None
     if not entries and isinstance(info, dict) and info.get("title"):
         entries = [info]
-    if not entries:
-        raise RuntimeError(f"{source} search returned no candidates")
-
     ranked = []
-    for entry in entries:
+    for entry in entries or []:
         if not isinstance(entry, dict):
             continue
         title = str(entry.get("title") or "").strip()
@@ -661,31 +704,29 @@ def _select_search_result(info: dict, query: str, source: str) -> tuple[str, dic
             or entry.get("channel")
             or ""
         ).strip()
-        candidate_text = f"{title} {artist}".strip()
-        score = _music_match_score(query, candidate_text)
+        score = _music_match_score(query, f"{title} {artist}".strip())
         candidate_url = (
             entry.get("webpage_url")
             or entry.get("original_url")
             or entry.get("url")
         )
-        if not candidate_url and entry.get("id"):
-            if source == "youtube":
-                candidate_url = f"https://www.youtube.com/watch?v={entry['id']}"
-        if candidate_url and str(candidate_url).startswith(("http://", "https://")):
+        if not candidate_url and entry.get("id") and source == "youtube":
+            candidate_url = f"https://www.youtube.com/watch?v={entry['id']}"
+        if score >= 0.40 and candidate_url and str(candidate_url).startswith(("http://", "https://")):
             ranked.append((score, str(candidate_url), entry))
-
-    if not ranked:
-        raise RuntimeError(f"{source} search returned no usable track URLs")
-
     ranked.sort(key=lambda item: item[0], reverse=True)
-    best_score, best_url, best_entry = ranked[0]
-    # Requiring meaningful overlap prevents a successful download of an unrelated song.
-    if best_score < 0.40:
-        best_title = str(best_entry.get("title") or "unknown")
-        raise RuntimeError(
-            f"{source} results did not sufficiently match the requested song "
-            f"(best match: {best_title}, score: {best_score:.2f})"
-        )
+    return ranked[:max(1, int(limit))]
+
+
+def _select_search_result(info: dict, query: str, source: str) -> tuple[str, dict]:
+    """Choose the closest matching search entry; reject weak or unrelated results."""
+    ranked = _rank_search_results(info, query, source, limit=5)
+    if not ranked:
+        entries = info.get("entries") if isinstance(info, dict) else None
+        if not entries:
+            raise RuntimeError(f"{source} search returned no candidates")
+        raise RuntimeError(f"{source} search returned no usable track URLs matching the requested song")
+    _score, best_url, best_entry = ranked[0]
     return best_url, best_entry
 
 
@@ -699,7 +740,7 @@ def _download_one(
     import yt_dlp
 
     def extract_and_download(options: dict):
-        with yt_dlp.YoutubeDL(options) as ydl:
+        with _new_ytdlp(options) as ydl:
             if target.startswith(("ytsearch", "scsearch")):
                 search_info = ydl.extract_info(target, download=False)
                 selected_url, _selected_entry = _select_search_result(
@@ -738,15 +779,17 @@ def _download_one(
         cookie_path = _write_youtube_cookies(job)
         if cookie_path:
             fallback_options["cookiefile"] = cookie_path
-        fallback_options["extractor_args"] = {
-            "youtube": "player_client=tv,web_safari"
-        }
+        # Preserve bgutil's PO-token provider and change only player clients.
+        fallback_options["extractor_args"]["youtube"] = (
+            "player_client=tv,web_safari"
+        )
         try:
             info = extract_and_download(fallback_options)
         except Exception as fallback_error:
             raise RuntimeError(
                 "YouTube default and alternate player clients both failed. "
-                f"default: {first_error}; alternate: {fallback_error}"
+                f"default: {first_error}; alternate: {fallback_error}; "
+                f"cookie diagnostics: {_youtube_cookie_diagnostics()}"
             ) from fallback_error
 
     # yt-dlp can report success while exposing the final output path only
@@ -1161,7 +1204,7 @@ def download_video(url: str):
         "js_runtimes": {"node": {}},
     }
     try:
-        with yt_dlp.YoutubeDL(options) as ydl:
+        with _new_ytdlp(options) as ydl:
             info = ydl.extract_info(url, download=True)
 
         if info and info.get("entries"):
