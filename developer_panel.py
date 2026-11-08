@@ -873,7 +873,7 @@ def _handle_callback_impl(bot, call):
         # to the general handler. Everything else belongs to the developer panel.
         allowed_callbacks = {
             "adm_close", "adm_home", "adm_admins", "adm_list", "adm_stats",
-            "adm_users", "adm_subs", "adm_broadcast", "adm_playback",
+            "adm_users", "adm_subs", "adm_broadcast",
             "adm_user_panel", "adm_add", "adm_remove", "adm_choose",
             "adm_permissions", "user_ban", "user_unban", "user_banned",
             "sub_add", "sub_remove", "sub_list", "sub_toggle", "sub_check",
