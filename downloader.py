@@ -200,10 +200,14 @@ def _write_youtube_cookies(job: Path) -> str | None:
 
 
 def _youtube_extractor_args() -> dict[str, str]:
-    # The bgutil provider generates fresh, video-bound PO tokens at runtime.
-    # mweb uses those tokens; tv and web_safari remain fallback clients.
+    # The plugin is installed from requirements.txt. Point its Node script
+    # provider at the copy built into the Docker image so PO tokens are
+    # generated on demand; keep alternate clients as independent fallbacks.
     return {
-        "youtube": "player-client=mweb,tv,web_safari"
+        "youtube": "player-client=mweb,tv,web_safari",
+        "youtube-bgutilscript": (
+            "server_home=/root/bgutil-ytdlp-pot-provider/server"
+        ),
     }
 
 
@@ -498,6 +502,38 @@ def _parallel_search_candidates(query: str, job: Path):
     faster matching provider.
     """
     def search_native(source: str):
+        if source == "audius":
+            # Audius exposes a public track-search API. Search it directly
+            # instead of scraping search-engine result pages for audius.co URLs.
+            endpoint = (
+                "https://api.audius.co/v1/tracks/search?query="
+                + quote_plus(query)
+                + "&limit=10&app_name=NANMusicBot"
+            )
+            request = Request(
+                endpoint,
+                headers={"User-Agent": "NAN-Telegram-Music-Bot/1.0", "Accept": "application/json"},
+            )
+            with urlopen(request, timeout=min(max(int(SOCKET_TIMEOUT), 1), 8)) as response:
+                payload = json.loads(response.read(1_500_000).decode("utf-8", errors="ignore"))
+            entries = []
+            for track in payload.get("data") or []:
+                if not isinstance(track, dict):
+                    continue
+                permalink = str(track.get("permalink") or "").strip()
+                title = str(track.get("title") or "").strip()
+                artist = str((track.get("user") or {}).get("name") or "").strip()
+                if permalink and title:
+                    entries.append({
+                        "title": title,
+                        "artist": artist,
+                        "webpage_url": permalink,
+                    })
+            selected_url, _entry = _select_search_result(
+                {"entries": entries}, query, source
+            )
+            return [(source, selected_url, False)]
+
         import yt_dlp
 
         target = f"ytsearch5:{query}" if source == "youtube" else f"scsearch5:{query}"
@@ -977,10 +1013,38 @@ def download_audio(query: str):
                 errors.append(f"{source}: {exc}")
                 _clear_job_files(job)
 
-        # If the requested text did not identify a downloadable track, treat it
-        # as a possible lyric fragment, resolve title/artist, then reuse the same
-        # verified parallel audio search. This is centralized here so chat,
-        # slash commands, and voice-chat playback all receive the same fallback.
+        # If the first search misses, ask public music catalogues for
+        # canonical title/artist spellings, then retry the audio providers.
+        # This also helps with alternate spellings and transliterations.
+        try:
+            catalog_queries = _catalog_search_queries(query)[:3]
+        except Exception as exc:
+            errors.append(f"catalog lookup: {type(exc).__name__}: {exc}")
+            catalog_queries = []
+
+        for catalog_query in catalog_queries:
+            _clear_job_files(job)
+            for source, target, validate_search in _parallel_search_candidates(catalog_query, job):
+                if source not in _ACTIVE_SOURCE_ORDER:
+                    continue
+                try:
+                    return _finish(
+                        job,
+                        _download_one(
+                            source,
+                            target,
+                            job,
+                            expected_query=catalog_query,
+                            validate_search=validate_search,
+                        ),
+                    )
+                except Exception as exc:
+                    errors.append(f"catalog match [{catalog_query}] {source}: {exc}")
+                    _clear_job_files(job)
+
+        # If the requested text may be a lyric fragment, resolve it to
+        # title/artist metadata, then reuse the same verified audio search.
+        # Genius remains a final fallback; its public endpoint can rate-limit.
         try:
             lyric_tracks = _lyrics_search_tracks(query)
         except Exception as exc:
