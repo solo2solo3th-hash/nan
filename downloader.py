@@ -14,7 +14,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from html import unescape
 from pathlib import Path
-from urllib.parse import quote_plus, urlparse, unquote
+from urllib.parse import quote_plus, urlencode, urlparse, unquote
 from urllib.request import Request, urlopen
 
 from config import (
@@ -83,11 +83,16 @@ _ACTIVE_SOURCE_ORDER = tuple(dict.fromkeys(
     + [name for name in _EXTRA_SOURCE_ORDER if name not in AUDIO_SOURCE_ORDER]
 ))
 
-# Social networks remain supported for direct URLs, but general web searches
-# often return company profiles/pages instead of playable audio posts.
+# Text search is restricted to music/audio catalogues. Video and social sites
+# remain supported for direct URLs, but their site-search results are mostly
+# unrelated clips, profiles, or posts rather than downloadable music tracks.
+_NATIVE_AUDIO_SEARCH_SOURCES = {"youtube", "soundcloud", "audius", "internet_archive"}
+_WEB_AUDIO_SEARCH_SOURCES = {
+    "jamendo", "bandcamp", "audiomack", "mixcloud", "hearthisat"
+}
 _SEARCHABLE_SOURCE_ORDER = tuple(
     source for source in _ACTIVE_SOURCE_ORDER
-    if source not in {"facebook", "twitter", "reddit", "twitch"}
+    if source in (_NATIVE_AUDIO_SEARCH_SOURCES | _WEB_AUDIO_SEARCH_SOURCES)
 )
 
 SEARCH_DOMAINS = {
@@ -541,41 +546,85 @@ def _parallel_search_candidates(
     job: Path,
     diagnostics: list[str] | None = None,
 ):
-    """Search native providers and fallback domains concurrently.
-
-    Native provider searches are relevance-ranked before they are yielded.
-    Web-search URLs are validated by _download_one before any download starts.
-    Results are yielded as workers finish, so a slow provider does not block a
-    faster matching provider.
-    """
-    def search_native(source: str):
-        if source == "audius":
-            # Use Audius' public catalogue API and keep multiple matches so a
-            # removed or inaccessible item does not end the fallback early.
-            endpoint = (
-                "https://api.audius.co/v1/tracks/search?query="
-                + quote_plus(query)
-                + "&limit=15&app_name=NANMusicBot"
-            )
+    """Search actual audio providers first, then audio-site URL discovery."""
+    def search_audius():
+        # Audius documents both the api.audius.co and discovery-provider hosts.
+        # Try both because the public gateway can be intermittently unavailable.
+        errors = []
+        for base in ("https://api.audius.co/v1", "https://discoveryprovider.audius.co/v1"):
+            endpoint = base + "/tracks/search?" + urlencode({
+                "query": query, "limit": 20, "app_name": "NANMusicBot"
+            })
             request = Request(
                 endpoint,
                 headers={"User-Agent": "NAN-Telegram-Music-Bot/1.0", "Accept": "application/json"},
             )
-            with urlopen(request, timeout=min(max(int(SOCKET_TIMEOUT), 1), 8)) as response:
-                payload = json.loads(response.read(1_500_000).decode("utf-8", errors="ignore"))
-            entries = []
-            for track in payload.get("data") or []:
-                if not isinstance(track, dict):
-                    continue
-                permalink = str(track.get("permalink") or "").strip()
-                title = str(track.get("title") or "").strip()
-                artist = str((track.get("user") or {}).get("name") or "").strip()
-                if permalink and title:
-                    entries.append({"title": title, "artist": artist, "webpage_url": permalink})
-            ranked = _rank_search_results({"entries": entries}, query, source, limit=5)
-            if not ranked:
-                raise RuntimeError("Audius search returned no relevant downloadable track URLs")
-            return [(source, url, False) for _score, url, _entry in ranked]
+            try:
+                with urlopen(request, timeout=min(max(int(SOCKET_TIMEOUT), 1), 8)) as response:
+                    payload = json.loads(response.read(1_500_000).decode("utf-8", errors="ignore"))
+                entries = []
+                for track in payload.get("data") or []:
+                    if not isinstance(track, dict):
+                        continue
+                    permalink = str(track.get("permalink") or "").strip()
+                    title = str(track.get("title") or "").strip()
+                    artist = str((track.get("user") or {}).get("name") or "").strip()
+                    if permalink and title:
+                        if permalink.startswith("/"):
+                            permalink = "https://audius.co" + permalink
+                        elif not permalink.startswith(("http://", "https://")):
+                            permalink = "https://audius.co/" + permalink.lstrip("/")
+                        entries.append({
+                            "title": title, "artist": artist,
+                            "webpage_url": permalink,
+                        })
+                ranked = _rank_search_results({"entries": entries}, query, "audius", limit=7)
+                if ranked:
+                    return [("audius", url, False) for _score, url, _entry in ranked]
+                errors.append("API returned no relevant tracks")
+            except Exception as exc:
+                errors.append(f"{type(exc).__name__}: {exc}")
+        raise RuntimeError("Audius search failed on both public gateways: " + " | ".join(errors[-2:]))
+
+    def search_archive():
+        # Internet Archive's public advanced-search API provides structured
+        # audio metadata, unlike scraping generic search-engine result HTML.
+        query_text = f'mediatype:audio AND (title:"{query}" OR creator:"{query}")'
+        endpoint = "https://archive.org/advancedsearch.php?" + urlencode({
+            "q": query_text,
+            "fl[]": ["identifier", "title", "creator"],
+            "rows": 20,
+            "page": 1,
+            "output": "json",
+        }, doseq=True)
+        request = Request(
+            endpoint,
+            headers={"User-Agent": "NAN-Telegram-Music-Bot/1.0", "Accept": "application/json"},
+        )
+        with urlopen(request, timeout=min(max(int(SOCKET_TIMEOUT), 1), 8)) as response:
+            payload = json.loads(response.read(1_500_000).decode("utf-8", errors="ignore"))
+        entries = []
+        for item in (payload.get("response") or {}).get("docs") or []:
+            identifier = str(item.get("identifier") or "").strip()
+            title = str(item.get("title") or "").strip()
+            creator = item.get("creator") or ""
+            if isinstance(creator, list):
+                creator = " ".join(str(value) for value in creator[:3])
+            if identifier and title:
+                entries.append({
+                    "title": title, "artist": str(creator),
+                    "webpage_url": "https://archive.org/details/" + identifier,
+                })
+        ranked = _rank_search_results({"entries": entries}, query, "internet_archive", limit=7)
+        if not ranked:
+            raise RuntimeError("Internet Archive returned no relevant audio records")
+        return [("internet_archive", url, True) for _score, url, _entry in ranked]
+
+    def search_native(source: str):
+        if source == "audius":
+            return search_audius()
+        if source == "internet_archive":
+            return search_archive()
 
         target = f"ytsearch10:{query}" if source == "youtube" else f"scsearch10:{query}"
         options = _source_options(job, source)
@@ -585,25 +634,26 @@ def _parallel_search_candidates(
                 options["cookiefile"] = cookie_path
         with _new_ytdlp(options) as ydl:
             info = ydl.extract_info(target, download=False)
-        ranked = _rank_search_results(info or {}, query, source, limit=5)
+        ranked = _rank_search_results(info or {}, query, source, limit=7)
         if not ranked:
             raise RuntimeError(f"{source} search returned no relevant downloadable track URLs")
         return [(source, url, False) for _score, url, _entry in ranked]
 
     def search_web(source: str):
-        return [
-            (source, candidate, True)
-            for candidate in _web_search_candidates(source, query)
-        ]
+        return [(source, candidate, True) for candidate in _web_search_candidates(source, query)]
 
     sources = [s for s in _SEARCHABLE_SOURCE_ORDER if s in _ACTIVE_SOURCE_ORDER]
-    executor = ThreadPoolExecutor(max_workers=min(12, max(2, len(sources))))
+    if not sources:
+        if diagnostics is not None:
+            diagnostics.append("No text-search audio providers are enabled")
+        return
+
+    executor = ThreadPoolExecutor(max_workers=min(8, len(sources)))
     futures = {}
-    search_errors = []
     yielded_any = False
     try:
         for source in sources:
-            worker = search_native if source in {"youtube", "soundcloud", "audius"} else search_web
+            worker = search_native if source in _NATIVE_AUDIO_SEARCH_SOURCES else search_web
             futures[executor.submit(worker, source)] = source
 
         for future in as_completed(futures):
@@ -611,37 +661,22 @@ def _parallel_search_candidates(
             try:
                 candidates = future.result()
             except Exception as exc:
-                detail = f"{source} search: {type(exc).__name__}: {exc}"
-                search_errors.append(detail)
                 if diagnostics is not None:
-                    diagnostics.append(detail)
+                    diagnostics.append(f"{source} search: {type(exc).__name__}: {exc}")
                 continue
-            if not candidates and diagnostics is not None:
-                diagnostics.append(f"{source} search: no matching candidates returned")
+            if not candidates:
+                if diagnostics is not None:
+                    diagnostics.append(f"{source} search: no matching candidates returned")
+                continue
             for candidate in candidates:
                 yielded_any = True
                 yield candidate
 
-        # If every concurrent discovery request failed or returned no URLs,
-        # retain a native yt-dlp search fallback instead of reporting that no
-        # sources are configured. _download_one will rank and validate entries.
-        if not yielded_any:
-            for source in ("youtube", "soundcloud"):
-                if source in sources:
-                    yield (
-                        source,
-                        f"ytsearch10:{query}" if source == "youtube" else f"scsearch10:{query}",
-                        False,
-                    )
-
-        if not yielded_any and search_errors:
-            # The caller will still attempt the native fallback above; include
-            # diagnostic detail only if that fallback also produces no result.
-            return
+        if not yielded_any and diagnostics is not None:
+            diagnostics.append("All enabled audio search providers returned no candidates")
     finally:
         for future in futures:
             future.cancel()
-        # Do not hold up the request waiting for slow/blocked search providers.
         executor.shutdown(wait=False, cancel_futures=True)
 
 
@@ -1050,11 +1085,16 @@ def download_audio(query: str):
 
     errors = []
     search_diagnostics = []
+    attempted_candidates = set()
     youtube_auth_blocked = False
 
     try:
         # First preserve the normal title/artist search across every provider.
         for source, target, validate_search in _parallel_search_candidates(query, job, search_diagnostics):
+            candidate_key = (source, target)
+            if candidate_key in attempted_candidates:
+                continue
+            attempted_candidates.add(candidate_key)
             if source not in _ACTIVE_SOURCE_ORDER:
                 continue
             if source == "youtube" and youtube_auth_blocked:
@@ -1089,6 +1129,10 @@ def download_audio(query: str):
         for catalog_query in catalog_queries:
             _clear_job_files(job)
             for source, target, validate_search in _parallel_search_candidates(catalog_query, job, search_diagnostics):
+                candidate_key = (source, target)
+                if candidate_key in attempted_candidates:
+                    continue
+                attempted_candidates.add(candidate_key)
                 if source not in _ACTIVE_SOURCE_ORDER:
                     continue
                 if source == "youtube" and youtube_auth_blocked:
@@ -1123,6 +1167,10 @@ def download_audio(query: str):
         for track_query in lyric_tracks:
             _clear_job_files(job)
             for source, target, validate_search in _parallel_search_candidates(track_query, job, search_diagnostics):
+                candidate_key = (source, target)
+                if candidate_key in attempted_candidates:
+                    continue
+                attempted_candidates.add(candidate_key)
                 if source not in _ACTIVE_SOURCE_ORDER:
                     continue
                 if source == "youtube" and youtube_auth_blocked:
@@ -1147,7 +1195,7 @@ def download_audio(query: str):
                         youtube_auth_blocked = True
                     _clear_job_files(job)
 
-        errors.extend(search_diagnostics[-25:])
+        errors.extend(list(dict.fromkeys(search_diagnostics))[-25:])
         raise RuntimeError(
             "No searchable source succeeded after normal, catalogue, and lyrics-based search. "
             + " | ".join(errors[-25:])
