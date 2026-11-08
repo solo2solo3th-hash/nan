@@ -1063,159 +1063,139 @@ def _lyrics_search_tracks(query: str) -> list[str]:
                 return tracks
     return tracks
 
+def search_audio(query: str) -> list[dict]:
+    """Search audio providers and return ranked, source-specific download targets.
+
+    This phase only discovers metadata and URLs. It does not download audio.
+    """
+    query = (query or "").strip()
+    if not query:
+        raise ValueError("query cannot be empty")
+
+    direct_source = _source_for_url(query)
+    if _is_url(query):
+        if not direct_source:
+            return [{
+                "source": "generic",
+                "target": query,
+                "expected_query": None,
+                "validate_search": False,
+            }]
+        return [{
+            "source": direct_source,
+            "target": query,
+            "expected_query": None,
+            "validate_search": False,
+        }]
+
+    Path(DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
+    results = []
+    seen = set()
+    diagnostics = []
+    blocked_sources = set()
+
+    def collect(search_query: str, phase: str) -> None:
+        for source, target, validate_search in _parallel_search_candidates(
+            search_query, search_job, diagnostics, blocked_sources
+        ):
+            key = (source, target)
+            if key in seen or source in blocked_sources:
+                continue
+            seen.add(key)
+            results.append({
+                "source": source,
+                "target": target,
+                "expected_query": search_query,
+                "validate_search": validate_search,
+                "search_phase": phase,
+            })
+
+    # Search happens in a disposable directory. yt-dlp needs an output
+    # template even with download=False, and YouTube cookies (if configured)
+    # are written here temporarily rather than into the user's download job.
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="nan-audio-search-", dir=DOWNLOAD_DIR) as temp:
+        search_job = Path(temp)
+
+        collect(query, "normal")
+
+        # Resolve alternate spellings using structured public music metadata.
+        try:
+            catalog_queries = _catalog_search_queries(query)[:3]
+        except Exception as exc:
+            diagnostics.append(f"catalog lookup: {type(exc).__name__}: {exc}")
+            catalog_queries = []
+
+        for catalog_query in catalog_queries:
+            collect(catalog_query, "catalogue")
+
+        # Lyrics lookup is only a final query-resolution fallback.
+        try:
+            lyric_tracks = _lyrics_search_tracks(query)
+        except Exception:
+            lyric_tracks = []
+
+        for track_query in lyric_tracks:
+            collect(track_query, "lyrics")
+
+    if not results:
+        detail = " | ".join(list(dict.fromkeys(diagnostics))[-25:])
+        raise RuntimeError(
+            "Audio search returned no usable candidates"
+            + (f": {detail}" if detail else "")
+        )
+
+    # Keep diagnostics available to callers without mixing them into candidate
+    # targets or attempting any download in this phase.
+    for result in results:
+        result["search_diagnostics"] = diagnostics[-25:]
+    return results
+
+
+def download_audio_result(result: dict, job: Path):
+    """Download one already-discovered candidate. No search is performed here."""
+    source = str(result.get("source") or "")
+    target = str(result.get("target") or "")
+    if not source or not target:
+        raise ValueError("A valid search result is required")
+
+    info = _download_one(
+        source,
+        target,
+        job,
+        expected_query=result.get("expected_query"),
+        validate_search=bool(result.get("validate_search")),
+    )
+    return _finish(job, info)
+
+
 def download_audio(query: str):
-    query = query.strip()
+    """Compatibility wrapper: search first, then try each result in rank order."""
+    query = (query or "").strip()
     if not query:
         raise ValueError("query cannot be empty")
 
     job = Path(DOWNLOAD_DIR) / uuid.uuid4().hex
     job.mkdir(parents=True, exist_ok=False)
 
-    direct_source = _source_for_url(query)
-
-    if _is_url(query) and not direct_source:
-        # Unknown-but-valid URLs may still be supported by a yt-dlp extractor.
-        try:
-            return _finish(job, _download_one("generic", query, job))
-        except Exception as exc:
-            cleanup_job(job)
-            raise RuntimeError(f"URL source failed: {exc}") from exc
-
-    if direct_source:
-        try:
-            return _finish(
-                job,
-                _download_one(direct_source, query, job),
-            )
-        except Exception as exc:
-            cleanup_job(job)
-            raise RuntimeError(
-                f"{direct_source} failed: {exc}"
-            ) from exc
-
-    errors = []
-    search_diagnostics = []
-    attempted_candidates = set()
-    blocked_sources = set()
-
     try:
-        # First preserve the normal title/artist search across every provider.
-        for source, target, validate_search in _parallel_search_candidates(query, job, search_diagnostics, blocked_sources):
-            candidate_key = (source, target)
-            if candidate_key in attempted_candidates:
-                continue
-            attempted_candidates.add(candidate_key)
-            if source not in _ACTIVE_SOURCE_ORDER:
-                continue
-            if source in blocked_sources:
-                continue
-
+        candidates = search_audio(query)
+        errors = []
+        for result in candidates:
+            _clear_job_files(job)
             try:
-                return _finish(
-                    job,
-                    _download_one(
-                        source,
-                        target,
-                        job,
-                        expected_query=query,
-                        validate_search=validate_search,
-                    ),
-                )
+                return download_audio_result(result, job)
             except Exception as exc:
-                errors.append(f"{source}: {exc}")
-                if source == "youtube" and _is_youtube_auth_block(exc):
-                    blocked_sources.add("youtube")
-                _clear_job_files(job)
+                source = str(result.get("source") or "unknown")
+                phase = str(result.get("search_phase") or "direct")
+                errors.append(f"{phase} {source}: {type(exc).__name__}: {exc}")
 
-        # If the first search misses, ask public music catalogues for
-        # canonical title/artist spellings, then retry the audio providers.
-        # This also helps with alternate spellings and transliterations.
-        try:
-            catalog_queries = _catalog_search_queries(query)[:3]
-        except Exception as exc:
-            errors.append(f"catalog lookup: {type(exc).__name__}: {exc}")
-            catalog_queries = []
-
-        for catalog_query in catalog_queries:
-            _clear_job_files(job)
-            for source, target, validate_search in _parallel_search_candidates(catalog_query, job, search_diagnostics, blocked_sources):
-                candidate_key = (source, target)
-                if candidate_key in attempted_candidates:
-                    continue
-                attempted_candidates.add(candidate_key)
-                if source not in _ACTIVE_SOURCE_ORDER:
-                    continue
-                if source in blocked_sources:
-                    continue
-                try:
-                    return _finish(
-                        job,
-                        _download_one(
-                            source,
-                            target,
-                            job,
-                            expected_query=catalog_query,
-                            validate_search=validate_search,
-                        ),
-                    )
-                except Exception as exc:
-                    errors.append(f"catalog match [{catalog_query}] {source}: {exc}")
-                    if source == "youtube" and _is_youtube_auth_block(exc):
-                        blocked_sources.add("youtube")
-                    _clear_job_files(job)
-
-        # If the requested text may be a lyric fragment, resolve it to
-        # title/artist metadata, then reuse the same verified audio search.
-        # Genius remains a final fallback; its public endpoint can rate-limit.
-        try:
-            lyric_tracks = _lyrics_search_tracks(query)
-        except Exception:
-            # Lyrics are an optional query-resolution aid, not an audio source.
-            # A 403/rate-limit must not pollute the final download failure report.
-            lyric_tracks = []
-
-        for track_query in lyric_tracks:
-            _clear_job_files(job)
-            for source, target, validate_search in _parallel_search_candidates(track_query, job, search_diagnostics, blocked_sources):
-                candidate_key = (source, target)
-                if candidate_key in attempted_candidates:
-                    continue
-                attempted_candidates.add(candidate_key)
-                if source not in _ACTIVE_SOURCE_ORDER:
-                    continue
-                if source in blocked_sources:
-                    continue
-                try:
-                    info, path, result_job = _finish(
-                        job,
-                        _download_one(
-                            source,
-                            target,
-                            job,
-                            expected_query=track_query,
-                            validate_search=validate_search,
-                        ),
-                    )
-                    info["lyrics_matched_query"] = query
-                    info["lyrics_resolved_track"] = track_query
-                    return info, path, result_job
-                except Exception as exc:
-                    errors.append(f"lyrics match [{track_query}] {source}: {exc}")
-                    if source == "youtube" and _is_youtube_auth_block(exc):
-                        blocked_sources.add("youtube")
-                    _clear_job_files(job)
-
-        errors.extend(list(dict.fromkeys(search_diagnostics))[-25:])
         raise RuntimeError(
-            "No searchable source succeeded after normal, catalogue, and lyrics-based search. "
+            "Search found candidates, but every download attempt failed. "
             + " | ".join(errors[-25:])
-            if errors
-            else (
-                "Normal music search and lyrics lookup returned no usable candidates"
-            )
         )
-    finally:
-        # Do not delete the job when a valid MP3 was returned.
+    except Exception:
+        # Do not delete the job when a valid MP3/M4A was returned.
         if not any(
             p.is_file()
             and p.suffix.lower() in {".mp3", ".m4a"}
@@ -1223,6 +1203,7 @@ def download_audio(query: str):
             for p in job.iterdir()
         ):
             cleanup_job(job)
+        raise
 
 
 VIDEO_EXTENSIONS = {".mp4", ".m4v", ".mov", ".webm", ".mkv"}
