@@ -231,7 +231,7 @@ def _youtube_cookie_diagnostics() -> str:
     for line in raw.splitlines():
         if not line or line.startswith("#"):
             continue
-        fields = line.split("\\t")
+        fields = line.split("\t")
         if len(fields) != 7:
             continue
         count += 1
@@ -682,6 +682,14 @@ def _music_match_score(query: str, candidate: str) -> float:
     return (0.78 * token_score) + (0.22 * phrase_score)
 
 
+def _is_youtube_auth_block(error: Exception) -> bool:
+    message = str(error).casefold()
+    return (
+        "sign in to confirm you're not a bot" in message
+        or "login_required" in message
+    )
+
+
 def _rank_search_results(
     info: dict,
     query: str,
@@ -1034,11 +1042,14 @@ def download_audio(query: str):
             ) from exc
 
     errors = []
+    youtube_auth_blocked = False
 
     try:
         # First preserve the normal title/artist search across every provider.
         for source, target, validate_search in _parallel_search_candidates(query, job):
             if source not in _ACTIVE_SOURCE_ORDER:
+                continue
+            if source == "youtube" and youtube_auth_blocked:
                 continue
 
             try:
@@ -1054,6 +1065,8 @@ def download_audio(query: str):
                 )
             except Exception as exc:
                 errors.append(f"{source}: {exc}")
+                if source == "youtube" and _is_youtube_auth_block(exc):
+                    youtube_auth_blocked = True
                 _clear_job_files(job)
 
         # If the first search misses, ask public music catalogues for
@@ -1070,6 +1083,8 @@ def download_audio(query: str):
             for source, target, validate_search in _parallel_search_candidates(catalog_query, job):
                 if source not in _ACTIVE_SOURCE_ORDER:
                     continue
+                if source == "youtube" and youtube_auth_blocked:
+                    continue
                 try:
                     return _finish(
                         job,
@@ -1083,6 +1098,8 @@ def download_audio(query: str):
                     )
                 except Exception as exc:
                     errors.append(f"catalog match [{catalog_query}] {source}: {exc}")
+                    if source == "youtube" and _is_youtube_auth_block(exc):
+                        youtube_auth_blocked = True
                     _clear_job_files(job)
 
         # If the requested text may be a lyric fragment, resolve it to
@@ -1098,6 +1115,8 @@ def download_audio(query: str):
             _clear_job_files(job)
             for source, target, validate_search in _parallel_search_candidates(track_query, job):
                 if source not in _ACTIVE_SOURCE_ORDER:
+                    continue
+                if source == "youtube" and youtube_auth_blocked:
                     continue
                 try:
                     info, path, result_job = _finish(
@@ -1115,6 +1134,8 @@ def download_audio(query: str):
                     return info, path, result_job
                 except Exception as exc:
                     errors.append(f"lyrics match [{track_query}] {source}: {exc}")
+                    if source == "youtube" and _is_youtube_auth_block(exc):
+                        youtube_auth_blocked = True
                     _clear_job_files(job)
 
         raise RuntimeError(
