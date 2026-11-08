@@ -470,25 +470,126 @@ def _catalog_search_queries(query: str) -> list[str]:
 
 
 def _search_candidates(query: str):
-    """Search native audio extractors, enriched by music catalogue metadata."""
-    expanded_queries = [query] + _catalog_search_queries(query)
-
-    # Search native providers with the original phrase and catalogue-derived
-    # title/artist variants, which helps when users enter partial or misspelled names.
-    for search_query in expanded_queries:
-        for source in _SEARCHABLE_SOURCE_ORDER:
-            if source == "youtube":
-                yield source, f"ytsearch1:{search_query}"
-            elif source == "soundcloud":
-                yield source, f"scsearch1:{search_query}"
-
-    # Search all configured downloadable source domains with the original query.
+    """Search native music providers with multiple candidates, then source fallbacks."""
+    # Keep the user's exact query as the relevance reference. Catalogue-derived
+    # expansions can drift to a different track, so they are not allowed to
+    # replace the original request during automatic selection.
     for source in _SEARCHABLE_SOURCE_ORDER:
+        if source == "youtube":
+            yield source, f"ytsearch5:{query}"
+        elif source == "soundcloud":
+            yield source, f"scsearch5:{query}"
+
+    # Search other configured downloadable source domains with the original query.
+    for source in _SEARCHABLE_SOURCE_ORDER:
+        if source in {"youtube", "soundcloud"}:
+            continue
         for candidate in _web_search_candidates(source, query):
             yield source, candidate
 
+
+def _normalize_music_text(value: str) -> str:
+    """Normalize Arabic/Latin music metadata for language-tolerant matching."""
+    import unicodedata
+
+    value = unicodedata.normalize("NFKD", str(value or "")).casefold()
+    value = "".join(char for char in value if not unicodedata.combining(char))
+    value = re.sub(r"[\u064B-\u065F\u0670\u0640]", "", value)
+    value = value.translate(str.maketrans({
+        "أ": "ا", "إ": "ا", "آ": "ا", "ٱ": "ا",
+        "ى": "ي", "ؤ": "و", "ئ": "ي", "ة": "ه",
+    }))
+    value = re.sub(r"[^\w]+", " ", value, flags=re.UNICODE)
+    value = re.sub(r"\s+", " ", value).strip()
+    ignored = {
+        "official", "audio", "video", "lyrics", "lyric", "music",
+        "topic", "hd", "4k", "visualizer", "remastered", "remaster",
+        "اغنيه", "اغاني", "اغنيه", "موسيقى", "ميوزك", "كلمات",
+        "تحميل", "تنزيل", "يوت", "يوتيوب", "mp3",
+    }
+    return " ".join(token for token in value.split() if token not in ignored)
+
+
+def _music_match_score(query: str, candidate: str) -> float:
+    """Return a conservative token/phrase similarity score in the 0..1 range."""
+    from difflib import SequenceMatcher
+
+    wanted = _normalize_music_text(query)
+    found = _normalize_music_text(candidate)
+    if not wanted or not found:
+        return 0.0
+
+    wanted_tokens = set(wanted.split())
+    found_tokens = set(found.split())
+    overlap = wanted_tokens & found_tokens
+    if not overlap:
+        return 0.0
+
+    coverage = len(overlap) / len(wanted_tokens)
+    precision = len(overlap) / len(found_tokens)
+    token_score = (0.78 * coverage) + (0.22 * precision)
+    phrase_score = SequenceMatcher(None, wanted, found).ratio()
+    return (0.78 * token_score) + (0.22 * phrase_score)
+
+
+def _select_search_result(info: dict, query: str, source: str) -> tuple[str, dict]:
+    """Choose the closest matching search entry; reject weak or unrelated results."""
+    entries = info.get("entries") if isinstance(info, dict) else None
+    if not entries:
+        raise RuntimeError(f"{source} search returned no candidates")
+
+    ranked = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        title = str(entry.get("title") or "").strip()
+        artist = str(
+            entry.get("artist")
+            or entry.get("creator")
+            or entry.get("uploader")
+            or entry.get("channel")
+            or ""
+        ).strip()
+        candidate_text = f"{title} {artist}".strip()
+        score = _music_match_score(query, candidate_text)
+        candidate_url = (
+            entry.get("webpage_url")
+            or entry.get("original_url")
+            or entry.get("url")
+        )
+        if not candidate_url and entry.get("id"):
+            if source == "youtube":
+                candidate_url = f"https://www.youtube.com/watch?v={entry['id']}"
+        if candidate_url and str(candidate_url).startswith(("http://", "https://")):
+            ranked.append((score, str(candidate_url), entry))
+
+    if not ranked:
+        raise RuntimeError(f"{source} search returned no usable track URLs")
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    best_score, best_url, best_entry = ranked[0]
+    # Requiring meaningful overlap prevents a successful download of an unrelated song.
+    if best_score < 0.40:
+        best_title = str(best_entry.get("title") or "unknown")
+        raise RuntimeError(
+            f"{source} results did not sufficiently match the requested song "
+            f"(best match: {best_title}, score: {best_score:.2f})"
+        )
+    return best_url, best_entry
+
+
 def _download_one(source: str, target: str, job: Path):
     import yt_dlp
+
+    def extract_and_download(options: dict):
+        with yt_dlp.YoutubeDL(options) as ydl:
+            if target.startswith(("ytsearch", "scsearch")):
+                search_info = ydl.extract_info(target, download=False)
+                selected_url, _selected_entry = _select_search_result(
+                    search_info or {}, target.split(":", 1)[1], source
+                )
+                return ydl.extract_info(selected_url, download=True)
+            return ydl.extract_info(target, download=True)
 
     options = _source_options(job, source)
 
@@ -498,8 +599,7 @@ def _download_one(source: str, target: str, job: Path):
             options["cookiefile"] = cookie_path
 
     try:
-        with yt_dlp.YoutubeDL(options) as ydl:
-            info = ydl.extract_info(target, download=True)
+        info = extract_and_download(options)
     except Exception as first_error:
         # YouTube can challenge the default web client on hosted server IPs.
         # Retry once with alternate public player clients before moving to the
@@ -514,8 +614,7 @@ def _download_one(source: str, target: str, job: Path):
             "youtube": "player_client=tv,web_safari"
         }
         try:
-            with yt_dlp.YoutubeDL(fallback_options) as ydl:
-                info = ydl.extract_info(target, download=True)
+            info = extract_and_download(fallback_options)
         except Exception as fallback_error:
             raise RuntimeError(
                 "YouTube default and alternate player clients both failed. "
