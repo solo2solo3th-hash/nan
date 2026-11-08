@@ -6,7 +6,7 @@ The implementation is intentionally split: developer-only controls live in
 from __future__ import annotations
 from telebot import types
 from config import DEVELOPER_ID
-from database import PERMISSIONS, get_permission_state, list_sudos
+from database import PERMISSIONS, PERMISSION_GROUPS, get_permission_state, list_sudos
 from developer_panel import (
     admin_text as _admin_text,
     admins_menu as _admins_menu,
@@ -49,26 +49,53 @@ def admin_text() -> str:
     return _admin_text()
 
 
+def sudo_markup(user_id: int):
+    """Build a restricted menu from this admin's actual granular permissions."""
+    state = get_permission_state(int(user_id), int(DEVELOPER_ID))
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+    if state.get("stats.view"):
+        keyboard.add(_admin_button("📊 الإحصائيات", callback_data="adm_stats"))
+    if any(state.get(f"users.{key}", False) for key in PERMISSION_GROUPS["users"]):
+        keyboard.add(_admin_button("👥 إدارة المستخدمين", callback_data="adm_users"))
+    if any(state.get(f"subscriptions.{key}", False) for key in PERMISSION_GROUPS["subscriptions"]):
+        keyboard.add(_admin_button("🔒 الاشتراك الإجباري", callback_data="adm_subs"))
+    if state.get("broadcast.send"):
+        keyboard.add(_admin_button("📣 الإذاعة", callback_data="adm_broadcast"))
+    if state.get("admins.view"):
+        keyboard.add(_admin_button("👨‍💻 قائمة المشرفين", callback_data="adm_list"))
+    keyboard.add(_admin_button("❌ إغلاق", callback_data="close_menu"))
+    return keyboard
+
+
 def playback_markup():
     # Single source of truth: the developer panel owns playback-panel callbacks.
     from developer_panel import playback_settings_markup
     return playback_settings_markup()
 
 
-def users_markup():
+def users_markup(user_id: int | None = None):
     keyboard = types.InlineKeyboardMarkup(row_width=1)
-    keyboard.add(_admin_button("🚫 حظر مستخدم", callback_data="user_ban"))
-    keyboard.add(_admin_button("✅ رفع الحظر", callback_data="user_unban"))
-    keyboard.add(_admin_button("📋 المحظورون", callback_data="user_banned"))
+    if user_id is None or get_permission_state(user_id, int(DEVELOPER_ID)).get("users.ban"):
+        keyboard.add(_admin_button("🚫 حظر مستخدم", callback_data="user_ban"))
+    if user_id is None or get_permission_state(user_id, int(DEVELOPER_ID)).get("users.unban"):
+        keyboard.add(_admin_button("✅ رفع الحظر", callback_data="user_unban"))
+    if user_id is None or get_permission_state(user_id, int(DEVELOPER_ID)).get("users.banned"):
+        keyboard.add(_admin_button("📋 المحظورون", callback_data="user_banned"))
     keyboard.add(_admin_button("↩️ الرئيسية", callback_data="adm_home"))
     return keyboard
 
 
-def subscriptions_markup():
+def subscriptions_markup(user_id: int | None = None):
+    state = get_permission_state(user_id, int(DEVELOPER_ID)) if user_id is not None else None
     keyboard = types.InlineKeyboardMarkup(row_width=2)
-    keyboard.row(_admin_button("➕ إضافة", callback_data="sub_add"), _admin_button("🗑️ حذف", callback_data="sub_remove"))
-    keyboard.add(_admin_button("📋 القنوات", callback_data="sub_list"))
-    keyboard.add(_admin_button("🔛 تشغيل/إيقاف الإجباري", callback_data="sub_toggle"))
+    if state is None or state.get("subscriptions.add"):
+        keyboard.add(_admin_button("➕ إضافة", callback_data="sub_add"))
+    if state is None or state.get("subscriptions.remove"):
+        keyboard.add(_admin_button("🗑️ حذف", callback_data="sub_remove"))
+    if state is None or state.get("subscriptions.view"):
+        keyboard.add(_admin_button("📋 القنوات", callback_data="sub_list"))
+    if state is None or state.get("subscriptions.toggle"):
+        keyboard.add(_admin_button("🔛 تشغيل/إيقاف الإجباري", callback_data="sub_toggle"))
     keyboard.add(_admin_button("↩️ الرئيسية", callback_data="adm_home"))
     return keyboard
 
