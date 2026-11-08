@@ -885,6 +885,45 @@ def _clear_job_files(job: Path) -> None:
             path.unlink(missing_ok=True)
 
 
+
+def _lyrics_search_tracks(query: str) -> list[str]:
+    """Resolve a lyric fragment to song title/artist metadata via Genius search."""
+    endpoint = "https://genius.com/api/search/multi?per_page=10&q=" + quote_plus(query)
+    request = Request(
+        endpoint,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; NANMusicBot/1.0)",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urlopen(request, timeout=min(max(int(SOCKET_TIMEOUT), 1), 8)) as response:
+            payload = json.loads(response.read(1_500_000).decode("utf-8", errors="ignore"))
+    except Exception as exc:
+        raise RuntimeError(f"Lyrics lookup failed: {type(exc).__name__}: {exc}") from exc
+
+    tracks = []
+    seen = set()
+    sections = ((payload.get("response") or {}).get("sections") or [])
+    for section in sections:
+        if section.get("type") != "song":
+            continue
+        for hit in section.get("hits") or []:
+            result = hit.get("result") or {}
+            title = re.sub(r"\s+", " ", str(result.get("title") or "")).strip()
+            artist_data = result.get("primary_artist") or {}
+            artist = re.sub(r"\s+", " ", str(artist_data.get("name") or "")).strip()
+            if not title:
+                continue
+            candidate = f"{title} {artist}".strip()
+            key = candidate.casefold()
+            if key not in seen:
+                seen.add(key)
+                tracks.append(candidate)
+            if len(tracks) >= 5:
+                return tracks
+    return tracks
+
 def download_audio(query: str):
     query = query.strip()
     if not query:
@@ -918,6 +957,7 @@ def download_audio(query: str):
     errors = []
 
     try:
+        # First preserve the normal title/artist search across every provider.
         for source, target, validate_search in _parallel_search_candidates(query, job):
             if source not in _ACTIVE_SOURCE_ORDER:
                 continue
@@ -937,13 +977,45 @@ def download_audio(query: str):
                 errors.append(f"{source}: {exc}")
                 _clear_job_files(job)
 
+        # If the requested text did not identify a downloadable track, treat it
+        # as a possible lyric fragment, resolve title/artist, then reuse the same
+        # verified parallel audio search. This is centralized here so chat,
+        # slash commands, and voice-chat playback all receive the same fallback.
+        try:
+            lyric_tracks = _lyrics_search_tracks(query)
+        except Exception as exc:
+            errors.append(f"lyrics lookup: {exc}")
+            lyric_tracks = []
+
+        for track_query in lyric_tracks:
+            _clear_job_files(job)
+            for source, target, validate_search in _parallel_search_candidates(track_query, job):
+                if source not in _ACTIVE_SOURCE_ORDER:
+                    continue
+                try:
+                    info, path, result_job = _finish(
+                        job,
+                        _download_one(
+                            source,
+                            target,
+                            job,
+                            expected_query=track_query,
+                            validate_search=validate_search,
+                        ),
+                    )
+                    info["lyrics_matched_query"] = query
+                    info["lyrics_resolved_track"] = track_query
+                    return info, path, result_job
+                except Exception as exc:
+                    errors.append(f"lyrics match [{track_query}] {source}: {exc}")
+                    _clear_job_files(job)
+
         raise RuntimeError(
-            "No searchable source succeeded. "
+            "No searchable source succeeded after normal and lyrics-based search. "
             + " | ".join(errors[-25:])
             if errors
             else (
-                "Concurrent discovery returned no usable candidates; "
-                "YouTube/SoundCloud native fallback also returned no candidates"
+                "Normal music search and lyrics lookup returned no usable candidates"
             )
         )
     finally:
