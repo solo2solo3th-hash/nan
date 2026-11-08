@@ -83,8 +83,15 @@ def handle_user_panel_callback(bot, call, alert) -> bool:
         return True
     if data not in allowed:
         return False
-    if not has_permission(call.from_user.id, "user_panel", DEVELOPER_ID):
-        alert(call, "🚫 ليست لديك صلاحية لهذا القسم.", True)
+    required_permission = {
+        "adm_user_panel": "user_panel.view",
+        "set_start_text": "user_panel.start_text",
+        "set_start_image": "user_panel.start_image",
+        "set_btn1": "user_panel.button1",
+        "set_btn2": "user_panel.button2",
+    }.get(data, "user_panel.view")
+    if not has_permission(call.from_user.id, required_permission, DEVELOPER_ID):
+        alert(call, "🚫 ليست لديك صلاحية لهذا الإجراء.", True)
         return True
     if data == "adm_user_panel":
         bot.edit_message_text("👤 لوحة العضو\n\nتحكم برسالة /start والصورة والأزرار:", call.message.chat.id, call.message.message_id, reply_markup=user_panel_settings_markup())
