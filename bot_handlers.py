@@ -363,8 +363,16 @@ def user_can_play(message, permission: str = "playback") -> bool:
     if is_banned(user_id):
         return False
     if CONTROL_ADMINS_ONLY:
-        permission = "playback" if permission not in PERMISSIONS else permission
-        return admin_can(user_id, permission)
+        # Enforce the matching granular playback right instead of allowing
+        # playback.play to implicitly authorize pause/skip/queue/download/etc.
+        permission_key = permission
+        if permission_key not in PERMISSIONS:
+            candidate = f"playback.{permission_key}"
+            aliases = {"clear": "playback.queue", "presence": "playback.join"}
+            permission_key = aliases.get(permission_key, candidate)
+        if permission_key not in PERMISSIONS:
+            permission_key = "playback.play"
+        return admin_can(user_id, permission_key)
     return True
 
 
@@ -1557,7 +1565,18 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             prompts={"play_source1":"📝 اسم المصدر الأول:","play_source1_url":"🔗 رابط المصدر الأول:","play_source2":"📝 اسم المصدر الثاني:","play_source2_url":"🔗 رابط المصدر الثاني:","play_set_image":"🖼️ أرسل صورة أو GIF لوحة التشغيل:"}
             _set_pending_from_callback(call,data,prompts[data],bot); return
         if data.startswith("music_"):
-            if not admin_can(call.from_user.id,"playback") and CONTROL_ADMINS_ONLY: alert(bot,call,"🚫 ليست لديك صلاحية التشغيل.",True); return
+            music_permission = {
+                "music_skip": "playback.skip",
+                "music_stop": "playback.stop",
+                "music_pause": "playback.pause",
+                "music_resume": "playback.resume",
+                "music_rewind_10": "playback.seek",
+                "music_forward_10": "playback.seek",
+                "music_queue": "playback.queue",
+                "music_add": "playback.play",
+            }.get(data, "playback.play")
+            if CONTROL_ADMINS_ONLY and not admin_can(call.from_user.id, music_permission):
+                alert(bot,call,"🚫 ليست لديك صلاحية هذا الإجراء.",True); return
             try:
                 chat_id=call.message.chat.id
                 if data=="music_skip":
