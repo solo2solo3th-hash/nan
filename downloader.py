@@ -505,17 +505,11 @@ def _catalog_search_queries(query: str) -> list[str]:
         except Exception:
             pass
 
-    # TIDAL and Qobuz are included as discovery/catalogue search pages.
-    # Their private playback APIs are not used to bypass subscriptions or DRM.
-    # Public web discovery also covers Spotify, Apple Music, Deezer, TIDAL and
-    # Qobuz pages when their API is unavailable or credentials are not set.
-    for provider in CATALOG_SEARCH_DOMAINS:
-        titles = _catalog_web_titles("duckduckgo", provider, query)
-        if not titles:
-            titles = _catalog_web_titles("bing", provider, query)
-        for title in titles:
-            add(title)
-
+    # Do not turn arbitrary search-engine page titles into song queries.
+    # Those pages frequently contain unrelated recommendations or ads, which
+    # previously caused unrelated tracks to be downloaded as catalogue matches.
+    # Only structured track metadata from public/authorized catalogue APIs is
+    # eligible for fallback search.
     return variants[:6]
 
 
@@ -720,7 +714,7 @@ def _rank_search_results(
         )
         if not candidate_url and entry.get("id") and source == "youtube":
             candidate_url = f"https://www.youtube.com/watch?v={entry['id']}"
-        if score >= 0.40 and candidate_url and str(candidate_url).startswith(("http://", "https://")):
+        if score >= 0.52 and candidate_url and str(candidate_url).startswith(("http://", "https://")):
             ranked.append((score, str(candidate_url), entry))
     ranked.sort(key=lambda item: item[0], reverse=True)
     return ranked[:max(1, int(limit))]
@@ -781,7 +775,7 @@ def _download_one(
         # YouTube can challenge the default web client on hosted server IPs.
         # Retry once with alternate public player clients before moving to the
         # next source. Never reuse a web PO token with a different client.
-        if source != "youtube":
+        if source != "youtube" or _is_youtube_auth_block(first_error):
             raise
         fallback_options = _source_options(job, source)
         cookie_path = _write_youtube_cookies(job)
@@ -1107,8 +1101,9 @@ def download_audio(query: str):
         # Genius remains a final fallback; its public endpoint can rate-limit.
         try:
             lyric_tracks = _lyrics_search_tracks(query)
-        except Exception as exc:
-            errors.append(f"lyrics lookup: {exc}")
+        except Exception:
+            # Lyrics are an optional query-resolution aid, not an audio source.
+            # A 403/rate-limit must not pollute the final download failure report.
             lyric_tracks = []
 
         for track_query in lyric_tracks:
