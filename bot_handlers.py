@@ -1476,6 +1476,13 @@ def register_handlers(bot, bot_username: str, calls: VoiceCallRunner, player: Mu
             else:
                 bot.answer_callback_query(call.id, "✅ تم التحقق من الاشتراك.", show_alert=True)
             return
+        if data == "adm_close":
+            bot.answer_callback_query(call.id)
+            try:
+                bot.delete_message(call.message.chat.id, call.message.message_id)
+            except Exception:
+                pass
+            return
         if data == "adm_home":
             if not admin_can(call.from_user.id): alert(bot, call, "🚫 لا تملك الصلاحية.", True); return
             if int(call.from_user.id) == int(DEVELOPER_ID):
