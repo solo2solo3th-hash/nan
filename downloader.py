@@ -9,6 +9,7 @@ import shutil
 import stat
 import subprocess
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from html import unescape
 from pathlib import Path
 from urllib.parse import quote_plus, urlparse, unquote
@@ -488,6 +489,57 @@ def _search_candidates(query: str):
             yield source, candidate
 
 
+def _parallel_search_candidates(query: str, job: Path):
+    """Search native providers and fallback domains concurrently.
+
+    Native provider searches are relevance-ranked before they are yielded.
+    Web-search URLs are validated by _download_one before any download starts.
+    Results are yielded as workers finish, so a slow provider does not block a
+    faster matching provider.
+    """
+    def search_native(source: str):
+        import yt_dlp
+
+        target = f"ytsearch5:{query}" if source == "youtube" else f"scsearch5:{query}"
+        options = _source_options(job, source)
+        if source == "youtube":
+            cookie_path = _write_youtube_cookies(job)
+            if cookie_path:
+                options["cookiefile"] = cookie_path
+        with yt_dlp.YoutubeDL(options) as ydl:
+            info = ydl.extract_info(target, download=False)
+        selected_url, _entry = _select_search_result(info or {}, query, source)
+        return [(source, selected_url, False)]
+
+    def search_web(source: str):
+        return [
+            (source, candidate, True)
+            for candidate in _web_search_candidates(source, query)
+        ]
+
+    sources = [s for s in _SEARCHABLE_SOURCE_ORDER if s in _ACTIVE_SOURCE_ORDER]
+    executor = ThreadPoolExecutor(max_workers=min(12, max(2, len(sources))))
+    futures = {}
+    try:
+        for source in sources:
+            worker = search_native if source in {"youtube", "soundcloud"} else search_web
+            futures[executor.submit(worker, source)] = source
+
+        for future in as_completed(futures):
+            source = futures[future]
+            try:
+                candidates = future.result()
+            except Exception:
+                continue
+            for candidate in candidates:
+                yield candidate
+    finally:
+        for future in futures:
+            future.cancel()
+        # Do not hold up the request waiting for slow/blocked search providers.
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
 def _normalize_music_text(value: str) -> str:
     """Normalize Arabic/Latin music metadata for language-tolerant matching."""
     import unicodedata
@@ -845,7 +897,7 @@ def download_audio(query: str):
     errors = []
 
     try:
-        for source, target in _search_candidates(query):
+        for source, target, validate_search in _parallel_search_candidates(query, job):
             if source not in _ACTIVE_SOURCE_ORDER:
                 continue
 
@@ -857,7 +909,7 @@ def download_audio(query: str):
                         target,
                         job,
                         expected_query=query,
-                        validate_search=True,
+                        validate_search=validate_search,
                     ),
                 )
             except Exception as exc:
