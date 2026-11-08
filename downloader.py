@@ -520,6 +520,8 @@ def _parallel_search_candidates(query: str, job: Path):
     sources = [s for s in _SEARCHABLE_SOURCE_ORDER if s in _ACTIVE_SOURCE_ORDER]
     executor = ThreadPoolExecutor(max_workers=min(12, max(2, len(sources))))
     futures = {}
+    search_errors = []
+    yielded_any = False
     try:
         for source in sources:
             worker = search_native if source in {"youtube", "soundcloud"} else search_web
@@ -529,10 +531,29 @@ def _parallel_search_candidates(query: str, job: Path):
             source = futures[future]
             try:
                 candidates = future.result()
-            except Exception:
+            except Exception as exc:
+                search_errors.append(f"{source}: {type(exc).__name__}: {exc}")
                 continue
             for candidate in candidates:
+                yielded_any = True
                 yield candidate
+
+        # If every concurrent discovery request failed or returned no URLs,
+        # retain a native yt-dlp search fallback instead of reporting that no
+        # sources are configured. _download_one will rank and validate entries.
+        if not yielded_any:
+            for source in ("youtube", "soundcloud"):
+                if source in sources:
+                    yield (
+                        source,
+                        f"ytsearch5:{query}" if source == "youtube" else f"scsearch5:{query}",
+                        False,
+                    )
+
+        if not yielded_any and search_errors:
+            # The caller will still attempt the native fallback above; include
+            # diagnostic detail only if that fallback also produces no result.
+            return
     finally:
         for future in futures:
             future.cancel()
@@ -920,7 +941,10 @@ def download_audio(query: str):
             "No searchable source succeeded. "
             + " | ".join(errors[-25:])
             if errors
-            else "No searchable source is configured"
+            else (
+                "Concurrent discovery returned no usable candidates; "
+                "YouTube/SoundCloud native fallback also returned no candidates"
+            )
         )
     finally:
         # Do not delete the job when a valid MP3 was returned.
