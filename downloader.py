@@ -535,6 +535,8 @@ def _music_match_score(query: str, candidate: str) -> float:
 def _select_search_result(info: dict, query: str, source: str) -> tuple[str, dict]:
     """Choose the closest matching search entry; reject weak or unrelated results."""
     entries = info.get("entries") if isinstance(info, dict) else None
+    if not entries and isinstance(info, dict) and info.get("title"):
+        entries = [info]
     if not entries:
         raise RuntimeError(f"{source} search returned no candidates")
 
@@ -578,7 +580,13 @@ def _select_search_result(info: dict, query: str, source: str) -> tuple[str, dic
     return best_url, best_entry
 
 
-def _download_one(source: str, target: str, job: Path):
+def _download_one(
+    source: str,
+    target: str,
+    job: Path,
+    expected_query: str | None = None,
+    validate_search: bool = False,
+):
     import yt_dlp
 
     def extract_and_download(options: dict):
@@ -589,6 +597,17 @@ def _download_one(source: str, target: str, job: Path):
                     search_info or {}, target.split(":", 1)[1], source
                 )
                 return ydl.extract_info(selected_url, download=True)
+
+            if validate_search and expected_query:
+                # General web-search candidates are checked too. Without this,
+                # a search engine can return an unrelated page that downloads
+                # successfully and gets mistaken for the requested song.
+                page_info = ydl.extract_info(target, download=False)
+                selected_url, _selected_entry = _select_search_result(
+                    page_info or {}, expected_query, source
+                )
+                return ydl.extract_info(selected_url, download=True)
+
             return ydl.extract_info(target, download=True)
 
     options = _source_options(job, source)
@@ -833,7 +852,13 @@ def download_audio(query: str):
             try:
                 return _finish(
                     job,
-                    _download_one(source, target, job),
+                    _download_one(
+                        source,
+                        target,
+                        job,
+                        expected_query=query,
+                        validate_search=True,
+                    ),
                 )
             except Exception as exc:
                 errors.append(f"{source}: {exc}")
