@@ -868,8 +868,20 @@ def _back_to_main(bot, call):
 def _handle_callback_impl(bot, call):
     """Internal callback dispatcher; returns True when consumed."""
     if not is_developer(call.from_user.id):
-        if (call.data or "").startswith(("dev_", "admin_", "bc_", "auto_", "toggle_perm:", "fs_", "set_fs_", "back_to_main", "close_menu")):
-            bot.answer_callback_query(call.id, "⛔ هذه اللوحة خاصة بالمطور.", show_alert=True)
+        data = call.data or ""
+        # Only hand known member-facing and permission-checked admin callbacks
+        # to the general handler. Everything else belongs to the developer panel.
+        allowed_callbacks = {
+            "adm_close", "adm_home", "adm_admins", "adm_list", "adm_stats",
+            "adm_users", "adm_subs", "adm_broadcast", "adm_playback",
+            "adm_user_panel", "adm_add", "adm_remove", "adm_choose",
+            "adm_permissions", "user_ban", "user_unban", "user_banned",
+            "sub_add", "sub_remove", "sub_list", "sub_toggle", "sub_check",
+            "add_bot_menu", "set_start_text", "set_start_image", "set_btn1",
+            "set_btn2",
+        }
+        if not (data in allowed_callbacks or data.startswith("music_")):
+            bot.answer_callback_query(call.id, "⛔ هذه الوظيفة خاصة بالمطور.", show_alert=True)
             return True
         return False
 
