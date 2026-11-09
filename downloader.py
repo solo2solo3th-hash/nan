@@ -591,8 +591,8 @@ def _parallel_search_candidates(
         # Internet Archive's public advanced-search API provides structured
         # audio metadata. Try exact phrase first, then token-based fallbacks:
         # quoted Arabic/Latin phrases can be too restrictive for archive metadata.
-        tokens = list(dict.fromkeys(re.findall(r"[^\\W_]+", query, flags=re.UNICODE)))[:6]
-        escaped = [re.sub(r'([+\\-!(){}\\[\\]^"~*?:\\\\/])', r"\\\\\\1", token) for token in tokens]
+        tokens = list(dict.fromkeys(re.findall(r"[^\W_]+", query, flags=re.UNICODE)))[:6]
+        escaped = [re.sub(r"\W", "", token) for token in tokens]
         query_texts = [f'mediatype:audio AND (title:"{query}" OR creator:"{query}")']
         if escaped:
             any_terms = " OR ".join(
@@ -756,7 +756,7 @@ def _music_match_score(query: str, candidate: str) -> float:
 
 def _is_youtube_auth_block(error: Exception) -> bool:
     # yt-dlp versions and player clients phrase Google's challenge differently.
-    message = re.sub(r"\\s+", " ", str(error)).casefold()
+    message = re.sub(r"\s+", " ", str(error)).casefold()
     message = message.replace("’", "'")
     return any(marker in message for marker in (
         "sign in to confirm you're not a bot",
