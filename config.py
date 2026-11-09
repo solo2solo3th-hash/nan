@@ -89,7 +89,7 @@ SUPPORTED_AUDIO_SOURCES = (
 PYTG_CALLS_VERSION = "2.3.3"
 PYROGRAMMOD_VERSION = "2.4.1"
 PYTELEBOT_VERSION = "4.37.0"
-YTDLP_VERSION = "2026.8.19"
+YTDLP_VERSION = "2026.10.26"
 
 for directory in (DATA_DIR, DOWNLOAD_DIR, DB_PATH.parent):
     directory.mkdir(parents=True, exist_ok=True)
