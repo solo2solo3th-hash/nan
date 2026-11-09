@@ -589,37 +589,59 @@ def _parallel_search_candidates(
 
     def search_archive():
         # Internet Archive's public advanced-search API provides structured
-        # audio metadata, unlike scraping generic search-engine result HTML.
-        query_text = f'mediatype:audio AND (title:"{query}" OR creator:"{query}")'
-        endpoint = "https://archive.org/advancedsearch.php?" + urlencode({
-            "q": query_text,
-            "fl[]": ["identifier", "title", "creator"],
-            "rows": 20,
-            "page": 1,
-            "output": "json",
-        }, doseq=True)
-        request = Request(
-            endpoint,
-            headers={"User-Agent": "NAN-Telegram-Music-Bot/1.0", "Accept": "application/json"},
-        )
-        with urlopen(request, timeout=min(max(int(SOCKET_TIMEOUT), 1), 8)) as response:
-            payload = json.loads(response.read(1_500_000).decode("utf-8", errors="ignore"))
+        # audio metadata. Try exact phrase first, then token-based fallbacks:
+        # quoted Arabic/Latin phrases can be too restrictive for archive metadata.
+        tokens = list(dict.fromkeys(re.findall(r"[^\\W_]+", query, flags=re.UNICODE)))[:6]
+        escaped = [re.sub(r'([+\\-!(){}\\[\\]^"~*?:\\\\/])', r"\\\\\\1", token) for token in tokens]
+        query_texts = [f'mediatype:audio AND (title:"{query}" OR creator:"{query}")']
+        if escaped:
+            any_terms = " OR ".join(
+                f"title:{token} OR creator:{token}" for token in escaped
+            )
+            query_texts.append(f"mediatype:audio AND ({any_terms})")
+            if len(escaped) > 1:
+                all_title = " AND ".join(f"title:{token}" for token in escaped)
+                all_creator = " AND ".join(f"creator:{token}" for token in escaped)
+                query_texts.append(
+                    f"mediatype:audio AND (({all_title}) OR ({all_creator}))"
+                )
+
         entries = []
-        for item in (payload.get("response") or {}).get("docs") or []:
-            identifier = str(item.get("identifier") or "").strip()
-            title = str(item.get("title") or "").strip()
-            creator = item.get("creator") or ""
-            if isinstance(creator, list):
-                creator = " ".join(str(value) for value in creator[:3])
-            if identifier and title:
-                entries.append({
-                    "title": title, "artist": str(creator),
-                    "webpage_url": "https://archive.org/details/" + identifier,
-                })
-        ranked = _rank_search_results({"entries": entries}, query, "internet_archive", limit=7)
-        if not ranked:
-            raise RuntimeError("Internet Archive returned no relevant audio records")
-        return [("internet_archive", url, True) for _score, url, _entry in ranked]
+        seen_ids = set()
+        for query_text in query_texts:
+            endpoint = "https://archive.org/advancedsearch.php?" + urlencode({
+                "q": query_text,
+                "fl[]": ["identifier", "title", "creator"],
+                "rows": 40,
+                "page": 1,
+                "output": "json",
+            }, doseq=True)
+            request = Request(
+                endpoint,
+                headers={"User-Agent": "NAN-Telegram-Music-Bot/1.0", "Accept": "application/json"},
+            )
+            try:
+                with urlopen(request, timeout=min(max(int(SOCKET_TIMEOUT), 1), 8)) as response:
+                    payload = json.loads(response.read(1_500_000).decode("utf-8", errors="ignore"))
+            except Exception:
+                continue
+            for item in (payload.get("response") or {}).get("docs") or []:
+                identifier = str(item.get("identifier") or "").strip()
+                title = str(item.get("title") or "").strip()
+                creator = item.get("creator") or ""
+                if isinstance(creator, list):
+                    creator = " ".join(str(value) for value in creator[:3])
+                if identifier and title and identifier not in seen_ids:
+                    seen_ids.add(identifier)
+                    entries.append({
+                        "title": title, "artist": str(creator),
+                        "webpage_url": "https://archive.org/details/" + identifier,
+                    })
+            ranked = _rank_search_results({"entries": entries}, query, "internet_archive", limit=7)
+            if ranked:
+                return [("internet_archive", url, True) for _score, url, _entry in ranked]
+
+        raise RuntimeError("Internet Archive returned no relevant audio records")
 
     def search_native(source: str):
         if source == "audius":
@@ -668,9 +690,7 @@ def _parallel_search_candidates(
             except Exception as exc:
                 if source == "youtube" and _is_youtube_auth_block(exc):
                     blocked_sources.add("youtube")
-                    detail = "YouTube search blocked by an authentication/bot challenge; skipping YouTube for this request"
-                else:
-                    detail = f"{type(exc).__name__}: {exc}"
+                detail = _safe_search_error(source, exc)
                 if diagnostics is not None:
                     diagnostics.append(f"{source} search: {detail}")
                 continue
@@ -735,11 +755,24 @@ def _music_match_score(query: str, candidate: str) -> float:
 
 
 def _is_youtube_auth_block(error: Exception) -> bool:
-    message = str(error).casefold()
-    return (
-        "sign in to confirm you're not a bot" in message
-        or "login_required" in message
-    )
+    # yt-dlp versions and player clients phrase Google's challenge differently.
+    message = re.sub(r"\\s+", " ", str(error)).casefold()
+    message = message.replace("’", "'")
+    return any(marker in message for marker in (
+        "sign in to confirm you're not a bot",
+        "confirm you're not a bot",
+        "sign in to confirm",
+        "login_required",
+        "authentication required",
+        "use --cookies-from-browser",
+        "use --cookies",
+    ))
+
+
+def _safe_search_error(source: str, error: Exception) -> str:
+    if source == "youtube" and _is_youtube_auth_block(error):
+        return "YouTube authentication/bot challenge; source skipped"
+    return f"{type(error).__name__}: {error}"
 
 
 def _rank_search_results(
@@ -1188,7 +1221,7 @@ def download_audio(query: str):
             except Exception as exc:
                 source = str(result.get("source") or "unknown")
                 phase = str(result.get("search_phase") or "direct")
-                errors.append(f"{phase} {source}: {type(exc).__name__}: {exc}")
+                errors.append(f"{phase} {source}: {_safe_search_error(source, exc)}")
 
         raise RuntimeError(
             "Search found candidates, but every download attempt failed. "
