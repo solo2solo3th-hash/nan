@@ -674,9 +674,15 @@ def _parallel_search_candidates(
             cookie_path = _write_youtube_cookies(job)
             if cookie_path:
                 options["cookiefile"] = cookie_path
+        elif source == "soundcloud":
+            # SoundCloud search can fail the entire playlist extraction when
+            # one result is DRM-protected. Flat extraction reads search metadata
+            # only, so one protected track cannot erase all usable candidates.
+            options["extract_flat"] = "in_playlist"
+            options["ignoreerrors"] = True
         with _new_ytdlp(options) as ydl:
             info = ydl.extract_info(target, download=False)
-        ranked = _rank_search_results(info or {}, query, source, limit=7)
+        ranked = _rank_search_results(info or {}, query, source, limit=12)
         if not ranked:
             raise RuntimeError(f"{source} search returned no relevant downloadable track URLs")
         return [(source, url, False) for _score, url, _entry in ranked]
@@ -841,6 +847,7 @@ def _rank_search_results(
         score = max(title_score, combined_score, description_score)
         candidate_url = (
             entry.get("webpage_url")
+            or entry.get("permalink_url")
             or entry.get("original_url")
             or entry.get("url")
         )
