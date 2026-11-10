@@ -791,8 +791,8 @@ def _safe_search_error(source: str, error: Exception) -> str:
     # Keep useful failure context while preventing credentials, signed URLs,
     # and very long extractor traces from reaching Telegram diagnostics.
     message = str(error).splitlines()[0][:240]
-    message = re.sub(r"(?i)(authorization|cookie|token|secret|password)\\s*[:=]\\s*[^ ,;]+", r"\\1=[redacted]", message)
-    message = re.sub(r"https?://[^\\s?]+\\?[^\\s]+", "[URL with query parameters]", message)
+    message = re.sub(r"(?i)(authorization|cookie|token|secret|password)\s*[:=]\s*[^ ,;]+", r"\1=[redacted]", message)
+    message = re.sub(r"https?://[^\s?]+\?[^\s]+", "[URL with query parameters]", message)
     return f"{type(error).__name__}: {message}"
 
 
@@ -1076,7 +1076,7 @@ def _finish(job: Path, info: dict):
 
         # Encoders and metadata do not produce perfectly predictable sizes.
         # Retry lower bitrates instead of failing after one optimistic estimate.
-        bitrates = list(dict.fromkeys([first_bitrate, 128, 96, 64, 48, 32]))
+        bitrates = [rate for rate in dict.fromkeys([first_bitrate, 128, 96, 64, 48, 32]) if rate <= first_bitrate]
         last_size = 0
         for bitrate in bitrates:
             _run_ffmpeg_to_mp3(source_file, mp3_file, bitrate_kbps=bitrate)
