@@ -255,14 +255,24 @@ def _youtube_cookie_diagnostics() -> str:
     )
 
 
-def _youtube_extractor_args() -> dict[str, str]:
-    # Use yt-dlp's documented argument names for both the player and bgutil.
+def _youtube_extractor_args(player_client: str = "mweb") -> dict[str, str]:
+    # Keep one player client per attempt so bgutil requests a matching PO Token.
+    # Avoid the TV client here: it has different cookie/auth behavior.
     return {
-        "youtube": "player_client=mweb,tv,web_safari",
+        "youtube": f"player_client={player_client}",
         "youtubepot-bgutilscript": (
             "server_home=/root/bgutil-ytdlp-pot-provider/server"
         ),
     }
+
+
+def _youtube_options(job: Path, player_client: str = "mweb") -> dict:
+    options = _source_options(job, "youtube")
+    options["extractor_args"] = _youtube_extractor_args(player_client)
+    cookie_path = _write_youtube_cookies(job)
+    if cookie_path:
+        options["cookiefile"] = cookie_path
+    return options
 
 
 def _is_url(value: str) -> bool:
@@ -669,19 +679,31 @@ def _parallel_search_candidates(
 
         # Fetch a wider result pool; ranking below still rejects weak matches.
         target = f"ytsearch20:{query}" if source == "youtube" else f"scsearch20:{query}"
-        options = _source_options(job, source)
-        if source == "youtube":
-            cookie_path = _write_youtube_cookies(job)
-            if cookie_path:
-                options["cookiefile"] = cookie_path
-        elif source == "soundcloud":
+        options = _youtube_options(job, "mweb") if source == "youtube" else _source_options(job, source)
+        if source == "soundcloud":
             # SoundCloud search can fail the entire playlist extraction when
             # one result is DRM-protected. Flat extraction reads search metadata
             # only, so one protected track cannot erase all usable candidates.
             options["extract_flat"] = "in_playlist"
             options["ignoreerrors"] = True
-        with _new_ytdlp(options) as ydl:
-            info = ydl.extract_info(target, download=False)
+        try:
+            with _new_ytdlp(options) as ydl:
+                info = ydl.extract_info(target, download=False)
+        except Exception as first_error:
+            if source != "youtube":
+                raise
+            # A bot challenge from one YouTube player must not suppress trying
+            # the alternate client. Each attempt gets its own client-specific PO token.
+            fallback_options = _youtube_options(job, "web_safari")
+            try:
+                with _new_ytdlp(fallback_options) as ydl:
+                    info = ydl.extract_info(target, download=False)
+            except Exception as fallback_error:
+                raise RuntimeError(
+                    "YouTube search failed with mweb and web_safari; "
+                    f"mweb: {first_error}; web_safari: {fallback_error}; "
+                    f"cookie diagnostics: {_youtube_cookie_diagnostics()}"
+                ) from fallback_error
         ranked = _rank_search_results(info or {}, query, source, limit=12)
         if not ranked:
             raise RuntimeError(f"{source} search returned no relevant downloadable track URLs")
@@ -901,35 +923,27 @@ def _download_one(
 
             return ydl.extract_info(target, download=True)
 
-    options = _source_options(job, source)
-
-    if source == "youtube":
-        cookie_path = _write_youtube_cookies(job)
-        if cookie_path:
-            options["cookiefile"] = cookie_path
+    options = _youtube_options(job, "mweb") if source == "youtube" else _source_options(job, source)
 
     try:
         info = extract_and_download(options)
     except Exception as first_error:
-        # YouTube can challenge the default web client on hosted server IPs.
-        # Retry once with alternate public player clients before moving to the
-        # next source. Never reuse a web PO token with a different client.
-        if source != "youtube" or _is_youtube_auth_block(first_error):
+        # Retry YouTube with a separate player client even for bot/auth challenges.
+        # The two attempts use client-specific PO-token requests from bgutil.
+        if source != "youtube":
             raise
-        fallback_options = _source_options(job, source)
-        cookie_path = _write_youtube_cookies(job)
-        if cookie_path:
-            fallback_options["cookiefile"] = cookie_path
-        # Preserve bgutil's PO-token provider and change only player clients.
-        fallback_options["extractor_args"]["youtube"] = (
-            "player_client=tv,web_safari"
-        )
+        fallback_options = _youtube_options(job, "web_safari")
         try:
             info = extract_and_download(fallback_options)
         except Exception as fallback_error:
+            challenge = (
+                "bot/auth challenge detected"
+                if _is_youtube_auth_block(first_error) or _is_youtube_auth_block(fallback_error)
+                else "player extraction failed"
+            )
             raise RuntimeError(
-                "YouTube default and alternate player clients both failed. "
-                f"default: {first_error}; alternate: {fallback_error}; "
+                f"YouTube {challenge}; mweb: {first_error}; "
+                f"web_safari: {fallback_error}; "
                 f"cookie diagnostics: {_youtube_cookie_diagnostics()}"
             ) from fallback_error
 
