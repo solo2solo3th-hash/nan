@@ -399,6 +399,8 @@ def _web_search_candidates(source: str, query: str, diagnostics: list[str] | Non
                 results.append(candidate)
         if len(results) >= 5:
             break
+    if not results and diagnostics is not None:
+        diagnostics.append(f"{source}: both public search engines returned no matching page URLs")
     return results
 
 
@@ -616,7 +618,7 @@ def _parallel_search_candidates(
         for query_text in query_texts:
             endpoint = "https://archive.org/advancedsearch.php?" + urlencode({
                 "q": query_text,
-                "fl[]": ["identifier", "title", "creator"],
+                "fl[]": ["identifier", "title", "creator", "description"],
                 "rows": 40,
                 "page": 1,
                 "output": "json",
@@ -628,7 +630,9 @@ def _parallel_search_candidates(
             try:
                 with urlopen(request, timeout=min(max(int(SOCKET_TIMEOUT), 1), 8)) as response:
                     payload = json.loads(response.read(1_500_000).decode("utf-8", errors="ignore"))
-            except Exception:
+            except Exception as exc:
+                if diagnostics is not None:
+                    diagnostics.append(f"Internet Archive lookup: {type(exc).__name__}")
                 continue
             for item in (payload.get("response") or {}).get("docs") or []:
                 identifier = str(item.get("identifier") or "").strip()
@@ -636,10 +640,14 @@ def _parallel_search_candidates(
                 creator = item.get("creator") or ""
                 if isinstance(creator, list):
                     creator = " ".join(str(value) for value in creator[:3])
+                description = item.get("description") or ""
+                if isinstance(description, list):
+                    description = " ".join(str(value) for value in description[:2])
                 if identifier and title and identifier not in seen_ids:
                     seen_ids.add(identifier)
                     entries.append({
                         "title": title, "artist": str(creator),
+                        "description": str(description)[:500],
                         "webpage_url": "https://archive.org/details/" + identifier,
                     })
             ranked = _rank_search_results({"entries": entries}, query, "internet_archive", limit=7)
@@ -766,8 +774,8 @@ def _minimum_music_match_score(query: str) -> float:
     if token_count <= 1:
         return 0.62
     if token_count == 2:
-        return 0.46
-    return 0.43
+        return 0.55
+    return 0.50
 
 
 def _is_youtube_auth_block(error: Exception) -> bool:
