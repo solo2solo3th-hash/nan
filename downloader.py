@@ -649,7 +649,8 @@ def _parallel_search_candidates(
         if source == "internet_archive":
             return search_archive()
 
-        target = f"ytsearch10:{query}" if source == "youtube" else f"scsearch10:{query}"
+        # Fetch a wider result pool; ranking below still rejects weak matches.
+        target = f"ytsearch20:{query}" if source == "youtube" else f"scsearch20:{query}"
         options = _source_options(job, source)
         if source == "youtube":
             cookie_path = _write_youtube_cookies(job)
@@ -733,7 +734,7 @@ def _normalize_music_text(value: str) -> str:
 
 
 def _music_match_score(query: str, candidate: str) -> float:
-    """Return a conservative token/phrase similarity score in the 0..1 range."""
+    """Score title/artist matches without over-penalizing extra artist metadata."""
     from difflib import SequenceMatcher
 
     wanted = _normalize_music_text(query)
@@ -745,13 +746,23 @@ def _music_match_score(query: str, candidate: str) -> float:
     found_tokens = set(found.split())
     overlap = wanted_tokens & found_tokens
     if not overlap:
-        return 0.0
+        return SequenceMatcher(None, wanted, found).ratio() * 0.35
 
     coverage = len(overlap) / len(wanted_tokens)
     precision = len(overlap) / len(found_tokens)
-    token_score = (0.78 * coverage) + (0.22 * precision)
+    token_score = (0.84 * coverage) + (0.16 * precision)
     phrase_score = SequenceMatcher(None, wanted, found).ratio()
-    return (0.78 * token_score) + (0.22 * phrase_score)
+    return (0.82 * token_score) + (0.18 * phrase_score)
+
+
+def _minimum_music_match_score(query: str) -> float:
+    """Keep one-word searches strict while allowing natural title/artist variants."""
+    token_count = len(_normalize_music_text(query).split())
+    if token_count <= 1:
+        return 0.62
+    if token_count == 2:
+        return 0.46
+    return 0.43
 
 
 def _is_youtube_auth_block(error: Exception) -> bool:
@@ -797,7 +808,11 @@ def _rank_search_results(
             or entry.get("channel")
             or ""
         ).strip()
-        score = _music_match_score(query, f"{title} {artist}".strip())
+        # Prefer title-only similarity when providers append uploader/channel
+        # metadata; otherwise score the combined title + artist string.
+        combined_score = _music_match_score(query, f"{title} {artist}".strip())
+        title_score = _music_match_score(query, title)
+        score = max(title_score, combined_score)
         candidate_url = (
             entry.get("webpage_url")
             or entry.get("original_url")
@@ -805,7 +820,7 @@ def _rank_search_results(
         )
         if not candidate_url and entry.get("id") and source == "youtube":
             candidate_url = f"https://www.youtube.com/watch?v={entry['id']}"
-        if score >= 0.52 and candidate_url and str(candidate_url).startswith(("http://", "https://")):
+        if score >= _minimum_music_match_score(query) and candidate_url and str(candidate_url).startswith(("http://", "https://")):
             ranked.append((score, str(candidate_url), entry))
     ranked.sort(key=lambda item: item[0], reverse=True)
     return ranked[:max(1, int(limit))]
