@@ -654,7 +654,10 @@ def _parallel_search_candidates(
                     })
             ranked = _rank_search_results({"entries": entries}, query, "internet_archive", limit=7)
             if ranked:
-                return [("internet_archive", url, True) for _score, url, _entry in ranked]
+                # Results were matched against Archive's structured metadata,
+                # including descriptions. Download the selected item directly
+                # instead of revalidating against a narrower extractor title.
+                return [("internet_archive", url, False) for _score, url, _entry in ranked]
 
         raise RuntimeError("Internet Archive returned no relevant audio records")
 
