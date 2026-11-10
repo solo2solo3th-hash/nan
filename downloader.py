@@ -311,7 +311,7 @@ def _source_options(job: Path, source: str) -> dict:
     return options
 
 
-def _search_engine_candidates(engine: str, source: str, query: str) -> list[str]:
+def _search_engine_candidates(engine: str, source: str, query: str, diagnostics: list[str] | None = None) -> list[str]:
     """Find playable pages for one source using a general web search engine."""
     domain = SEARCH_DOMAINS.get(source)
     if not domain:
@@ -340,7 +340,9 @@ def _search_engine_candidates(engine: str, source: str, query: str) -> list[str]
         # Bound each search request so a blocked search engine cannot stall the bot.
         with urlopen(req, timeout=min(max(int(SOCKET_TIMEOUT), 1), 4)) as response:
             html = response.read(1_500_000).decode("utf-8", errors="ignore")
-    except Exception:
+    except Exception as exc:
+        if diagnostics is not None:
+            diagnostics.append(f"{source}/{engine} lookup: {type(exc).__name__}")
         return []
 
     found = []
@@ -386,12 +388,12 @@ def _search_engine_candidates(engine: str, source: str, query: str) -> list[str]
     return found
 
 
-def _web_search_candidates(source: str, query: str) -> list[str]:
+def _web_search_candidates(source: str, query: str, diagnostics: list[str] | None = None) -> list[str]:
     """Try more than one search engine and return several source-specific pages."""
     results = []
     seen = set()
     for engine in ("duckduckgo", "bing"):
-        for candidate in _search_engine_candidates(engine, source, query):
+        for candidate in _search_engine_candidates(engine, source, query, diagnostics):
             if candidate not in seen:
                 seen.add(candidate)
                 results.append(candidate)
@@ -445,7 +447,7 @@ def _catalog_web_titles(engine: str, source: str, query: str) -> list[str]:
     return titles
 
 
-def _catalog_search_queries(query: str) -> list[str]:
+def _catalog_search_queries(query: str, diagnostics: list[str] | None = None) -> list[str]:
     """Expand a music query with metadata from public/authorized music catalogues."""
     variants = []
     seen = {query.casefold()}
@@ -467,8 +469,9 @@ def _catalog_search_queries(query: str) -> list[str]:
             payload = json.loads(response.read(1_000_000).decode("utf-8", errors="ignore"))
         for item in payload.get("data", []):
             add(item.get("title", ""), (item.get("artist") or {}).get("name", ""))
-    except Exception:
-        pass
+    except Exception as exc:
+        if diagnostics is not None:
+            diagnostics.append(f"Deezer catalogue: {type(exc).__name__}")
 
     # Apple's public iTunes Search endpoint supplies track and artist metadata.
     try:
@@ -481,8 +484,9 @@ def _catalog_search_queries(query: str) -> list[str]:
             payload = json.loads(response.read(1_000_000).decode("utf-8", errors="ignore"))
         for item in payload.get("results", []):
             add(item.get("trackName", ""), item.get("artistName", ""))
-    except Exception:
-        pass
+    except Exception as exc:
+        if diagnostics is not None:
+            diagnostics.append(f"Apple catalogue: {type(exc).__name__}")
 
     # Spotify's official catalogue API requires app credentials. If configured,
     # use client-credentials auth; never hard-code secrets in the repository.
@@ -511,8 +515,9 @@ def _catalog_search_queries(query: str) -> list[str]:
                 add(item.get("name", ""), ", ".join(
                     artist.get("name", "") for artist in item.get("artists", [])
                 ))
-        except Exception:
-            pass
+        except Exception as exc:
+            if diagnostics is not None:
+                diagnostics.append(f"Spotify catalogue: {type(exc).__name__}")
 
     # Do not turn arbitrary search-engine page titles into song queries.
     # Those pages frequently contain unrelated recommendations or ads, which
@@ -664,7 +669,7 @@ def _parallel_search_candidates(
         return [(source, url, False) for _score, url, _entry in ranked]
 
     def search_web(source: str):
-        return [(source, candidate, True) for candidate in _web_search_candidates(source, query)]
+        return [(source, candidate, True) for candidate in _web_search_candidates(source, query, diagnostics)]
 
     blocked_sources = blocked_sources if blocked_sources is not None else set()
     sources = [
@@ -783,7 +788,12 @@ def _is_youtube_auth_block(error: Exception) -> bool:
 def _safe_search_error(source: str, error: Exception) -> str:
     if source == "youtube" and _is_youtube_auth_block(error):
         return "YouTube authentication/bot challenge; source skipped"
-    return f"{type(error).__name__}: {error}"
+    # Keep useful failure context while preventing credentials, signed URLs,
+    # and very long extractor traces from reaching Telegram diagnostics.
+    message = str(error).splitlines()[0][:240]
+    message = re.sub(r"(?i)(authorization|cookie|token|secret|password)\\s*[:=]\\s*[^ ,;]+", r"\\1=[redacted]", message)
+    message = re.sub(r"https?://[^\\s?]+\\?[^\\s]+", "[URL with query parameters]", message)
+    return f"{type(error).__name__}: {message}"
 
 
 def _rank_search_results(
@@ -1034,6 +1044,20 @@ def _finish(job: Path, info: dict):
     target_size_bytes = int(max_size_bytes * 0.92)
     source_size_bytes = source_file.stat().st_size
     duration = max(0, int(info.get("duration") or 0))
+    if duration <= 0:
+        # Extractor metadata is often missing. Ask ffprobe before choosing a bitrate.
+        ffprobe = shutil.which("ffprobe")
+        if ffprobe:
+            try:
+                probe = subprocess.run(
+                    [ffprobe, "-v", "error", "-show_entries", "format=duration",
+                     "-of", "default=noprint_wrappers=1:nokey=1", str(source_file)],
+                    capture_output=True, text=True, timeout=20, check=False,
+                )
+                if probe.returncode == 0:
+                    duration = max(0, int(float((probe.stdout or "").strip() or 0)))
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                pass
 
     # bot_handlers.py accepts both MP3 and M4A. Keep either format when it
     # already fits the upload limit, avoiding needless FFmpeg work and timeouts.
@@ -1044,13 +1068,27 @@ def _finish(job: Path, info: dict):
         mp3_file = source_file
     else:
         mp3_file = job / f"{source_file.stem}-normalized.mp3"
-        bitrate_kbps = 192
         if duration > 0:
-            # Estimate a bitrate that fits within the target size. Keep a
-            # reasonable floor; the final size check below remains authoritative.
-            estimated = int((target_size_bytes * 8 / duration / 1000) * 0.90)
-            bitrate_kbps = max(32, min(192, estimated))
-        _run_ffmpeg_to_mp3(source_file, mp3_file, bitrate_kbps=bitrate_kbps)
+            estimated = int((target_size_bytes * 8 / duration / 1000) * 0.88)
+            first_bitrate = max(32, min(192, estimated))
+        else:
+            first_bitrate = 96 if source_size_bytes > target_size_bytes else 128
+
+        # Encoders and metadata do not produce perfectly predictable sizes.
+        # Retry lower bitrates instead of failing after one optimistic estimate.
+        bitrates = list(dict.fromkeys([first_bitrate, 128, 96, 64, 48, 32]))
+        last_size = 0
+        for bitrate in bitrates:
+            _run_ffmpeg_to_mp3(source_file, mp3_file, bitrate_kbps=bitrate)
+            last_size = mp3_file.stat().st_size if mp3_file.exists() else 0
+            if 0 < last_size <= max_size_bytes:
+                break
+        else:
+            raise RuntimeError(
+                f"Audio remains over the effective upload limit of {effective_max_mb} MiB "
+                f"after adaptive compression (last size: {last_size // (1024 * 1024)} MiB). "
+                "Try a shorter track."
+            )
 
     if not mp3_file.exists() or mp3_file.stat().st_size <= 0:
         raise RuntimeError("MP3 output is missing or empty")
@@ -1169,7 +1207,7 @@ def search_audio(query: str) -> list[dict]:
 
         # Resolve alternate spellings using structured public music metadata.
         try:
-            catalog_queries = _catalog_search_queries(query)[:3]
+            catalog_queries = _catalog_search_queries(query, diagnostics)[:3]
         except Exception as exc:
             diagnostics.append(f"catalog lookup: {type(exc).__name__}: {exc}")
             catalog_queries = []
@@ -1180,7 +1218,8 @@ def search_audio(query: str) -> list[dict]:
         # Lyrics lookup is only a final query-resolution fallback.
         try:
             lyric_tracks = _lyrics_search_tracks(query)
-        except Exception:
+        except Exception as exc:
+            diagnostics.append(f"Genius lyrics lookup: {type(exc).__name__}")
             lyric_tracks = []
 
         for track_query in lyric_tracks:
