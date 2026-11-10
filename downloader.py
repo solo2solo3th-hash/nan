@@ -600,12 +600,14 @@ def _parallel_search_candidates(
         # quoted Arabic/Latin phrases can be too restrictive for archive metadata.
         tokens = list(dict.fromkeys(re.findall(r"[^\W_]+", query, flags=re.UNICODE)))[:6]
         escaped = [re.sub(r"\W", "", token) for token in tokens]
-        query_texts = [f'mediatype:audio AND (title:"{query}" OR creator:"{query}")']
+        archive_phrase = query.replace("\\", "\\\\").replace('"', '\\"')
+        query_texts = [f'mediatype:audio AND (title:"{archive_phrase}" OR creator:"{archive_phrase}" OR description:"{archive_phrase}")']
         if escaped:
             any_terms = " OR ".join(
                 f"title:{token} OR creator:{token}" for token in escaped
             )
-            query_texts.append(f"mediatype:audio AND ({any_terms})")
+            description_terms = " OR ".join(f"description:{token}" for token in escaped)
+            query_texts.append(f"mediatype:audio AND (({any_terms}) OR ({description_terms}))")
             if len(escaped) > 1:
                 all_title = " AND ".join(f"title:{token}" for token in escaped)
                 all_creator = " AND ".join(f"creator:{token}" for token in escaped)
@@ -830,7 +832,10 @@ def _rank_search_results(
         # metadata; otherwise score the combined title + artist string.
         combined_score = _music_match_score(query, f"{title} {artist}".strip())
         title_score = _music_match_score(query, title)
-        score = max(title_score, combined_score)
+        description = _normalize_music_text(entry.get("description") or "")
+        wanted_phrase = _normalize_music_text(query)
+        description_score = 0.62 if wanted_phrase and wanted_phrase in description else 0.0
+        score = max(title_score, combined_score, description_score)
         candidate_url = (
             entry.get("webpage_url")
             or entry.get("original_url")
