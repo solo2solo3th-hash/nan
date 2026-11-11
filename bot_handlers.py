@@ -63,6 +63,7 @@ def _send_search_status(bot, chat_id, reply_to_message_id=None, default_text="ðŸ
             phrase = random.choice(phrases)
     except Exception:
         log.exception("Could not read configured search-wait phrases")
+
     if phrase:
         text = phrase.get("text") or default_text
         entities = [
@@ -73,21 +74,38 @@ def _send_search_status(bot, chat_id, reply_to_message_id=None, default_text="ðŸ
                 custom_emoji_id=item["custom_emoji_id"]
             )
             for item in phrase.get("entities", [])
-        ]
-        try:
-            return bot.send_message(
-                chat_id, text, reply_to_message_id=reply_to_message_id,
-                entities=entities or None
-            )
-        except Exception:
-            if not entities:
-                raise
+        ] or None
+    else:
+        text = (setting_get("SEARCH_WAIT_TEXT") or default_text).strip() or default_text
+        entities = None
+
+    send_kwargs = {"entities": entities} if entities else {}
+    if reply_to_message_id is not None:
+        send_kwargs["reply_to_message_id"] = reply_to_message_id
+
+    try:
+        return bot.send_message(chat_id, text, **send_kwargs)
+    except Exception as exc:
+        description = (getattr(exc, "description", None) or str(exc)).lower()
+        missing_reply = "message to be replied not found" in description
+        if missing_reply and "reply_to_message_id" in send_kwargs:
+            # The original message may have been deleted or become unavailable.
+            # Send the status as a normal chat message instead of aborting playback.
+            send_kwargs.pop("reply_to_message_id", None)
+            try:
+                return bot.send_message(chat_id, text, **send_kwargs)
+            except Exception:
+                if not entities:
+                    raise
+                log.exception("Premium custom emoji failed after reply fallback; sending plain text")
+                return bot.send_message(chat_id, text)
+        if entities:
             log.exception("Premium custom emoji in wait phrase failed; sending plain text")
             return bot.send_message(
-                chat_id, text, reply_to_message_id=reply_to_message_id
+                chat_id, text,
+                **({"reply_to_message_id": reply_to_message_id} if reply_to_message_id is not None else {})
             )
-    text = (setting_get("SEARCH_WAIT_TEXT") or default_text).strip() or default_text
-    return bot.send_message(chat_id, text, reply_to_message_id=reply_to_message_id)
+        raise
 
 
 
